@@ -163,6 +163,18 @@ function watchedGrid(items, ctx, { own = false } = {}) {
     })) }];
 }
 
+const MONTHS = [["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
+  ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]];
+
+/** "T1 · E7 · 17 oct" ([lang] 0 Spanish, 1 English): the episode, when there is one, and the day it was watched. */
+function watchedLine(a, lang) {
+  const parts = [];
+  if (Number.isInteger(a.season) && Number.isInteger(a.episode)) parts.push(lang ? `S${a.season} · E${a.episode}` : `T${a.season} · E${a.episode}`);
+  const d = new Date(Number(a.watchedAt) || 0);
+  if (a.watchedAt) parts.push(lang ? `${MONTHS[1][d.getMonth()]} ${d.getDate()}` : `${d.getDate()} ${MONTHS[0][d.getMonth()]}`);
+  return parts.join(" · ");
+}
+
 function profileTab(s, ctx) {
   const p = s.profile;
   if (!p) return { type: "Column", padding: pagePadding, gap: 12, children: skeletonFeed().slice(0, 1) };
@@ -179,10 +191,9 @@ function profileTab(s, ctx) {
       type: "Row", key: "ma" + a.id, gap: 12, crossAxisAlignment: "center", children: [
         { type: "Image", width: 40, aspect: "2:3", borderRadius: "small", ...(a.poster ? { url: a.poster } : {}), alt: a.title, altEn: a.title,
           fallback: { type: "Stack", color: "surfaceVariant", children: [{ type: "Icon", name: a.kind === "movie" ? "movie" : "tv", margin: 8 }] } },
-        { type: "Column", flex: 1, children: [Raw(a.title, { maxLines: 1, bold: true }),
-          ...(Number.isInteger(a.season) && Number.isInteger(a.episode) ? [Raw(`T${a.season} · E${a.episode}`, { style: "caption", color: "muted" })] : []),
-          { type: "Text", time: a.watchedAt, style: "caption", color: "muted" }] },
-        { type: "Switch", key: "act" + a.id, value: !a.hidden, labelText: "Mostrar", labelTextEn: "Show", onChanged: { event: "toggleActivity", arg: String(a.id) } },
+        // A labelled Switch fills its row, so the title is its label (flex 1) rather than a column beside it.
+        { type: "Switch", key: "act" + a.id, flex: 1, value: !a.hidden, labelText: a.title || "—", labelTextEn: a.title || "—",
+          hint: watchedLine(a, 0), hintEn: watchedLine(a, 1), onChanged: { event: "toggleActivity", arg: String(a.id) } },
       ] })) : [Txt(T.noWatched, { color: "muted" })]),
     Txt(T.posts, { style: "h4" }),
     ...((p.posts || []).length ? p.posts.map((post) => postCard(post, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })]),
