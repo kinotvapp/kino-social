@@ -12,7 +12,7 @@ To install it, open Kino ▸ Plugins ▸ **From Kino** and tap **Install**. It n
 
 A small social network inside Kino: a feed of what people write and watch, likes, one level of comments, profiles,
 @handles and people to follow. It is a **screen plugin** (`"screen"`, apiVersion 15) and the only Kino plugin with a server
-of its own (`social.comparadorinternet.co`, code in a separate repository).
+of its own (`129-158-250-81.sslip.io`, an Oracle Cloud server; code in a separate repository).
 
 ## How it is built
 

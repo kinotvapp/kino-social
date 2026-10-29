@@ -1,14 +1,14 @@
 {
   "id": "kino-social",
   "name": "Kino Social",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "apiVersion": 15,
   "entry": "plugin.js",
   "description": "Experimento: un feed para contar lo que ves, con comentarios, perfiles y personas a las que seguir",
   "author": "kinotvapp",
   "icon": "icon.png",
   "hosts": [
-    "social.comparadorinternet.co"
+    "129-158-250-81.sslip.io"
   ],
   "fetchHosts": "any",
   "capabilities": [
@@ -45,6 +45,6 @@
   },
   "signature": {
     "authorKey": "82b87b938e0a95b142467c815a8823cb54310a13a828c3c4c77b1eda43294ae6",
-    "value": "d5733ceca76c71063361a1c0d85ac647e3dde2695ab60e3d2198dadf3b4353e9de40c93e60fb16a92ce39c92fcfab18889adf10e2e0819c5838ea9111a5ea801"
+    "value": "7277183f3abc9223b8641ff29e7125fc82ab3a2ee1d73b835264d6d0a8bfcbeadedc39b3892840a7fb1741e7a8a86d5ed16314eee18137ff381852896d93040f"
   }
 }

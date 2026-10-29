@@ -1,6 +1,6 @@
 // The Kino Social server: one host, JSON, a bearer session kept in kino.storage.
 
-export const BASE = "https://social.comparadorinternet.co";
+export const BASE = "https://129-158-250-81.sslip.io";
 const SESSION_KEY = "session";
 const SESSION_TTL_MS = 29 * 24 * 3600 * 1000;
 
