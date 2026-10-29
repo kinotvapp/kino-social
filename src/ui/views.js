@@ -84,19 +84,31 @@ function feedList(s, ctx, src = generalSource(s)) {
     empty: src.empty || emptyFeed() };
 }
 
-function threadBody(s, ctx, { pane = false } = {}) {
+/** The post and its comments, without the box to write one. */
+function threadItems(s, ctx) {
   const th = s.thread;
-  if (!th || !th.post) {
-    return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
-  }
   const comments = th.items || [];
   return [
     postCard(th.post, { ...ctx, device: "phone" }, s.me, { full: true }),
-    Txt(T.comments, { style: "h5", bold: true, margin: { top: 4 } }),
-    ...(comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { color: "muted" })]),
-    { type: "TextField", key: "commentText", maxLength: 300, labelText: T.commentHint[0], labelTextEn: T.commentHint[1],
-      onSubmitted: "sendComment", trailingIcon: "send", trailingLabel: T.send[0], trailingLabelEn: T.send[1], onTrailingTap: "sendComment" },
+    Txt(T.comments, { key: "commentsTitle", style: "h5", bold: true, margin: { top: 4 } }),
+    ...(comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { key: "noComments", color: "muted" })]),
   ];
+}
+
+/** The box to write a comment and its send button: a button, so Kino shows it busy while the comment is saved. */
+function commentBox() {
+  const send = { event: "sendComment", timeoutMs: 20000 };
+  return { type: "Row", key: "commentBox", gap: 8, crossAxisAlignment: "center", children: [
+    { type: "TextField", key: "commentText", flex: 1, maxLength: 300, labelText: T.commentHint[0], labelTextEn: T.commentHint[1], onSubmitted: send },
+    IconBtn("send", T.send, send, { key: "sendComment" }),
+  ] };
+}
+
+function threadBody(s, ctx) {
+  if (!s.thread || !s.thread.post) {
+    return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
+  }
+  return [...threadItems(s, ctx), commentBox()];
 }
 
 // ---- tabs ------------------------------------------------------------------------------------------------------------
@@ -106,7 +118,6 @@ export function feedTab(s, ctx, src = generalSource(s)) {
     return { type: "Column", flex: 1, children: [
       feedList(s, ctx, src),
       composerSheet(s),
-      { type: "BottomSheet", key: "thread", title: T.post[0], titleEn: T.post[1], onClose: "threadClosed", children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] },
     ] };
   }
   // TV: the feed on the left, the chosen post on the right (OK on a card opens it there); writing from the FAB-like
@@ -120,7 +131,7 @@ export function feedTab(s, ctx, src = generalSource(s)) {
       { ...feedList(s, ctx, src), padding: 0 },
     ] },
     { type: "Card", key: "pane", flex: 5, background: "surfaceVariant", padding: 16, canRequestFocus: !(s.thread && s.thread.post),
-      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx, { pane: true }) }] }] },
+      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] }] },
     composerSheet(s),
   ] };
 }
@@ -241,18 +252,17 @@ function peopleTab(s, ctx) {
 // ---- the root --------------------------------------------------------------------------------------------------------
 
 export function mainView(s, ctx) {
-  const tab = ["feed", "communities", "profile", "people"].includes(s.tab) ? s.tab : "feed";
+  const tab = ["feed", "communities", "people"].includes(s.tab) ? s.tab : "feed";
   const unread = s.unread || 0;
   const tabs = { type: "TabBar", key: "tabs", value: tab, onChanged: "tab", tabs: [
     { value: "feed", label: T.feed[0], labelEn: T.feed[1] },
     { value: "communities", label: T.communities[0], labelEn: T.communities[1] },
     { value: "people", label: T.people[0], labelEn: T.people[1] },
   ] };
-  // Your profile, top right (as in most social apps); its badge says what is new for you.
-  const me = IconBtn("person", T.profile, "openProfile", { key: "openProfile", selected: tab === "profile",
+  // Your profile, top right (as in most social apps), opens its own page; its badge says what is new for you.
+  const me = IconBtn("person", T.profile, "openProfile", { key: "openProfile",
     ...(unread ? { badge: { text: String(Math.min(unread, 99)) } } : {}) });
-  const body = tab === "profile" ? profileTab(s, ctx) : tab === "people" ? peopleTab(s, ctx)
-    : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
+  const body = tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
   return {
     type: "Scaffold",
     every: { ms: 60000, event: "tick" },
@@ -265,10 +275,20 @@ export function mainView(s, ctx) {
   };
 }
 
+/** Your own profile: a page over the tabs, with the back arrow. */
+export function meView(s, ctx) {
+  return { type: "Scaffold", appBar: { type: "AppBar", title: T.profile[0], titleEn: T.profile[1],
+    leading: IconBtn("arrow_back", T.back, "back") }, body: profileTab(s, ctx) };
+}
+
+/** A post as a chat: the post and its comments in a list that opens at, and follows, the newest; the box below it. */
 export function postView(s, ctx) {
-  return { type: "Scaffold", appBar: { type: "AppBar", title: T.post[0], titleEn: T.post[1],
-    leading: IconBtn("arrow_back", T.back, "back") },
-  body: { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 12, maxWidth: 640, alignSelf: "center", fill: true, children: threadBody(s, ctx) }] } };
+  const appBar = { type: "AppBar", title: T.post[0], titleEn: T.post[1], leading: IconBtn("arrow_back", T.back, "back") };
+  if (!s.thread || !s.thread.post) return { type: "Scaffold", appBar, body: { type: "Column", padding: pagePadding, children: threadBody(s, ctx) } };
+  return { type: "Scaffold", appBar, body: { type: "Column", flex: 1, children: [
+    { type: "ListView", key: "threadList", flex: 1, gap: 12, padding: pagePadding, stickToBottom: true, newItemsHint: true, items: threadItems(s, ctx) },
+    { type: "Column", padding: { x: 12, y: 8 }, children: [commentBox()] },
+  ] } };
 }
 
 export function userView(s, ctx) {

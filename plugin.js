@@ -558,27 +558,25 @@ function feedItem(item, ctx, me, selectedId) {
   return null;
 }
 function commentRow(c, me) {
-  const mine = me && c.user.id === me.id;
+  const mine = !!me && String(c.user.id) === String(me.id);
+  const when = { type: "Text", time: c.createdAt, style: "caption", color: "muted" };
+  const bubble = {
+    type: "Card",
+    flex: 5,
+    color: mine ? "primaryContainer" : "surfaceVariant",
+    padding: { x: 12, y: 8 },
+    gap: 4,
+    // The pointed corner sits on the speaker's side.
+    borderRadius: mine ? { topStart: "large", topEnd: "small", bottomStart: "large", bottomEnd: "large" } : { topStart: "small", topEnd: "large", bottomStart: "large", bottomEnd: "large" },
+    children: mine ? [Raw(c.text), { type: "Row", mainAxisAlignment: "end", children: [when] }] : [{ type: "Row", gap: 8, children: [Raw(c.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 }), when] }, Raw(c.text)]
+  };
+  const room = { type: "Spacer", flex: 1 };
   return {
     type: "Row",
     key: "c" + c.id,
     gap: 8,
     crossAxisAlignment: "start",
-    children: [
-      { type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] },
-      {
-        type: "Card",
-        flex: 1,
-        color: mine ? "primaryContainer" : "surfaceVariant",
-        padding: { x: 12, y: 8 },
-        gap: 4,
-        borderRadius: { topStart: "small", topEnd: "large", bottomStart: "large", bottomEnd: "large" },
-        children: [
-          { type: "Row", gap: 8, children: [Raw(c.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 }), { type: "Text", time: c.createdAt, style: "caption", color: "muted" }] },
-          Raw(c.text)
-        ]
-      }
-    ]
+    children: mine ? [room, bubble] : [{ type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] }, bubble, room]
   };
 }
 
@@ -682,36 +680,33 @@ function feedList(s, ctx, src = generalSource(s)) {
     empty: src.empty || emptyFeed()
   };
 }
-function threadBody(s, ctx, { pane = false } = {}) {
+function threadItems(s, ctx) {
   const th = s.thread;
-  if (!th || !th.post) {
-    return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
-  }
   const comments = th.items || [];
   return [
     postCard(th.post, { ...ctx, device: "phone" }, s.me, { full: true }),
-    Txt(T.comments, { style: "h5", bold: true, margin: { top: 4 } }),
-    ...comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { color: "muted" })],
-    {
-      type: "TextField",
-      key: "commentText",
-      maxLength: 300,
-      labelText: T.commentHint[0],
-      labelTextEn: T.commentHint[1],
-      onSubmitted: "sendComment",
-      trailingIcon: "send",
-      trailingLabel: T.send[0],
-      trailingLabelEn: T.send[1],
-      onTrailingTap: "sendComment"
-    }
+    Txt(T.comments, { key: "commentsTitle", style: "h5", bold: true, margin: { top: 4 } }),
+    ...comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { key: "noComments", color: "muted" })]
   ];
+}
+function commentBox() {
+  const send = { event: "sendComment", timeoutMs: 2e4 };
+  return { type: "Row", key: "commentBox", gap: 8, crossAxisAlignment: "center", children: [
+    { type: "TextField", key: "commentText", flex: 1, maxLength: 300, labelText: T.commentHint[0], labelTextEn: T.commentHint[1], onSubmitted: send },
+    IconBtn("send", T.send, send, { key: "sendComment" })
+  ] };
+}
+function threadBody(s, ctx) {
+  if (!s.thread || !s.thread.post) {
+    return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
+  }
+  return [...threadItems(s, ctx), commentBox()];
 }
 function feedTab(s, ctx, src = generalSource(s)) {
   if (!isTv(ctx)) {
     return { type: "Column", flex: 1, children: [
       feedList(s, ctx, src),
-      composerSheet(s),
-      { type: "BottomSheet", key: "thread", title: T.post[0], titleEn: T.post[1], onClose: "threadClosed", children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] }
+      composerSheet(s)
     ] };
   }
   return { type: "Row", flex: 1, gap: 24, padding: { x: 32, y: 16 }, children: [
@@ -729,7 +724,7 @@ function feedTab(s, ctx, src = generalSource(s)) {
       background: "surfaceVariant",
       padding: 16,
       canRequestFocus: !(s.thread && s.thread.post),
-      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx, { pane: true }) }] }]
+      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] }]
     },
     composerSheet(s)
   ] };
@@ -923,7 +918,7 @@ function peopleTab(s, ctx) {
   ] };
 }
 function mainView(s, ctx) {
-  const tab = ["feed", "communities", "profile", "people"].includes(s.tab) ? s.tab : "feed";
+  const tab = ["feed", "communities", "people"].includes(s.tab) ? s.tab : "feed";
   const unread = s.unread || 0;
   const tabs = { type: "TabBar", key: "tabs", value: tab, onChanged: "tab", tabs: [
     { value: "feed", label: T.feed[0], labelEn: T.feed[1] },
@@ -932,10 +927,9 @@ function mainView(s, ctx) {
   ] };
   const me = IconBtn("person", T.profile, "openProfile", {
     key: "openProfile",
-    selected: tab === "profile",
     ...unread ? { badge: { text: String(Math.min(unread, 99)) } } : {}
   });
-  const body = tab === "profile" ? profileTab(s, ctx) : tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
+  const body = tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
   return {
     type: "Scaffold",
     every: { ms: 6e4, event: "tick" },
@@ -947,17 +941,21 @@ function mainView(s, ctx) {
     body
   };
 }
+function meView(s, ctx) {
+  return { type: "Scaffold", appBar: {
+    type: "AppBar",
+    title: T.profile[0],
+    titleEn: T.profile[1],
+    leading: IconBtn("arrow_back", T.back, "back")
+  }, body: profileTab(s, ctx) };
+}
 function postView(s, ctx) {
-  return {
-    type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      title: T.post[0],
-      titleEn: T.post[1],
-      leading: IconBtn("arrow_back", T.back, "back")
-    },
-    body: { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 12, maxWidth: 640, alignSelf: "center", fill: true, children: threadBody(s, ctx) }] }
-  };
+  const appBar = { type: "AppBar", title: T.post[0], titleEn: T.post[1], leading: IconBtn("arrow_back", T.back, "back") };
+  if (!s.thread || !s.thread.post) return { type: "Scaffold", appBar, body: { type: "Column", padding: pagePadding, children: threadBody(s, ctx) } };
+  return { type: "Scaffold", appBar, body: { type: "Column", flex: 1, children: [
+    { type: "ListView", key: "threadList", flex: 1, gap: 12, padding: pagePadding, stickToBottom: true, newItemsHint: true, items: threadItems(s, ctx) },
+    { type: "Column", padding: { x: 12, y: 8 }, children: [commentBox()] }
+  ] } };
 }
 function userView(s, ctx) {
   const p = s.user;
@@ -1673,9 +1671,9 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       case "open":
         return open(s, route || { name: "main" });
       case "openProfile":
+        return { route: { push: "me", params: {} }, state: { ...await loadProfile(s.me) } };
       case "tab": {
-        const tab = name === "openProfile" ? "profile" : value;
-        if (tab === "profile") return { state: { tab, ...await loadProfile(s.me) } };
+        const tab = value;
         if (tab === "people") {
           const people = await call("/people");
           return { state: { tab, people: people.items, results: void 0 } };
@@ -1685,7 +1683,7 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       }
       case "refresh": {
         const out = { ...await loadFeed(s), selected: s.selected };
-        if (s.tab === "profile") Object.assign(out, await loadProfile(s.me));
+        if (route && route.name === "me") Object.assign(out, await loadProfile(s.me));
         if (s.tab === "people") out.people = (await call("/people")).items;
         if (s.tab === "communities") out.communities = await call("/communities");
         await syncActivity().catch(() => 0);
@@ -1773,10 +1771,8 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       case "openPost": {
         const thread = await loadThread(arg);
         if (device === "tv") return { state: { thread, selected: String(arg) }, focus: "commentText" };
-        return { state: { thread }, ui: [{ open: "thread" }] };
+        return { route: { push: "post", params: { id: String(arg) } }, state: { thread } };
       }
-      case "threadClosed":
-        return null;
       case "sendComment": {
         const raw = String(inputs.commentText || "").trim();
         if (!raw || !s.thread) return null;
@@ -1802,11 +1798,12 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         if (s.user) out.user = { ...s.user, posts: (s.user.posts || []).filter(keep) };
         const wasOpen = s.thread && sameId(s.thread.postId, arg);
         if (wasOpen) out.thread = null;
-        return { state: out, ...wasOpen ? { ui: [{ close: "thread" }] } : {}, ...toast(T.deleted) };
+        const onItsPage = wasOpen && route && route.name === "post";
+        return { state: { ...out, ...onItsPage ? { view: "main" } : {} }, ...onItsPage ? { route: { pop: true } } : {}, ...toast(T.deleted) };
       }
       case "openUser":
-        if (s.me && sameId(arg, s.me.id)) return { state: { tab: "profile", ...await loadProfile(s.me) }, ui: [{ close: "thread" }] };
-        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) }, ui: [{ close: "thread" }] };
+        if (s.me && sameId(arg, s.me.id)) return { route: { push: "me", params: {} }, state: { ...await loadProfile(s.me) } };
+        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) } };
       case "back": {
         const out = { view: "main" };
         if (s.feed === void 0) Object.assign(out, await loadFeed(s));
@@ -1913,9 +1910,11 @@ async function screen({ state, route, device, size, lang }) {
   if (!s.me) return { type: "Column", padding: 48, crossAxisAlignment: "center", children: [{ type: "CircularProgressIndicator" }] };
   if (s.view === "welcome" || !s.me.handle) return welcomeView(s, ctx);
   const name = route && route.name;
-  if (name === "post" || s.view === "post") return postView(s, ctx);
-  if (name === "user" || s.view === "user") return userView(s, ctx);
-  if (name === "community" || s.view === "community") return communityView(s, ctx);
+  const page = ["me", "post", "user", "community"].includes(name) ? name : s.view;
+  if (page === "me") return meView(s, ctx);
+  if (page === "post") return postView(s, ctx);
+  if (page === "user") return userView(s, ctx);
+  if (page === "community") return communityView(s, ctx);
   return mainView(s, ctx);
 }
 async function job() {
