@@ -111,14 +111,16 @@ test("a post needs text or an attached title", () => {
   assert.equal(canPublish("", { kind: "person", tmdbId: 1, title: "x" }), false);
 });
 
-test("the post body: the attachment is the title unless a TMDB or IMDb link in the text brought one", () => {
+test("the post body: the attachment the person picked wins over any link; without one, the link decides", () => {
   assert.deepEqual(postBody({ text: "La vi\nanoche", attach: DUNE }), { text: "La vi\nanoche", title: DUNE });
   assert.deepEqual(postBody({ text: "", attach: ST, communityId: "12" }), { text: "", title: ST, communityId: 12 });
   assert.deepEqual(postBody({ text: "hola" }), { text: "hola" });
   const linked = { ...DUNE, tmdbId: 1, title: "Del enlace" };
-  assert.deepEqual(postBody({ text: "https://www.themoviedb.org/movie/1", linkTitle: linked, attach: ST }).title, linked);
+  assert.deepEqual(postBody({ text: "https://www.themoviedb.org/movie/1", linkTitle: linked, attach: ST }).title, ST);
+  assert.deepEqual(postBody({ text: "https://www.themoviedb.org/movie/1", linkTitle: linked }), { text: "https://www.themoviedb.org/movie/1", title: linked });
   const link = { url: "https://youtu.be/x", title: "Tráiler" };
-  assert.deepEqual(postBody({ text: "https://youtu.be/x", link, attach: DUNE }), { text: "https://youtu.be/x", title: DUNE, link });
+  assert.deepEqual(postBody({ text: "https://youtu.be/x", link, attach: DUNE }), { text: "https://youtu.be/x", title: DUNE });
+  assert.deepEqual(postBody({ text: "https://youtu.be/x", link }), { text: "https://youtu.be/x", link });
   assert.deepEqual(postBody({ text: "x", link: { url: "https://a.example" } }), { text: "x" });
   assert.deepEqual(postBody({ text: "x", attach: { kind: "movie" } }), { text: "x" });
 });

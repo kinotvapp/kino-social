@@ -8,6 +8,7 @@ import { clean } from "./swear.js";
 import { moderationDialog, moderationState, muteDialog, mutedUntil } from "./moderation.js";
 import { linkPreview } from "./linkpreview.js";
 import { titleHint } from "./titlelink.js";
+import { tidyLines } from "./lines.js";
 import { canPublish, cleanQuery, pickAttachment, postBody, recentTitles, searchTitles } from "./attach.js";
 
 const MAX_FEED = 80;
@@ -253,13 +254,14 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         return { state: { attach: null }, focus: "openAttach" };
       case "publish": {
         const values = (arguments[0] && arguments[0].values) || inputs;
-        const raw = String(values.postText ?? inputs.postText ?? "").trim();
+        const raw = tidyLines(values.postText ?? inputs.postText);
         const attach = s.attach || null;
         if (!canPublish(raw, attach)) return toast(T.needTextOrTitle);
         const text = raw ? await clean(raw) : "";
         // The device reads the link (the server never fetches): a TMDB or IMDb title from Kino's TMDB, else the page's head.
-        const linkTitle = text ? await titleHint(text) : null;
-        const link = linkTitle || !text ? null : await linkPreview(text);
+        // A title the person attached wins over any link, which then stays plain text: nothing to read.
+        const linkTitle = text && !attach ? await titleHint(text) : null;
+        const link = linkTitle || !text || attach ? null : await linkPreview(text);
         // Written inside a community's page, it goes to that community and its feed; else to the general one.
         const inCommunity = s.community && ((route && route.name === "community") || s.view === "community");
         const json = postBody({ text, linkTitle, link, attach, communityId: inCommunity ? s.community.id : null });
@@ -284,7 +286,7 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "threadClosed":
         return null;
       case "sendComment": {
-        const raw = String(inputs.commentText || "").trim();
+        const raw = tidyLines(inputs.commentText);
         if (!raw || !s.thread) return null;
         const text = await clean(raw);
         const c = await callFresh(`/posts/${s.thread.postId}/comments`, { method: "POST", json: { text } });

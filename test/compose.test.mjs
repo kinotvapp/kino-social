@@ -45,6 +45,24 @@ test("line breaks reach the server as written", async () => {
   assert.deepEqual(sent.at(-1), { path: "/posts/1/comments", json: { text: "uno\ndos" } });
 });
 
+test("blank-line runs are collapsed before sending", async () => {
+  const sent = [];
+  fakeKino(sent);
+  await screenEvent({ name: "publish", state: { feed: [], inputs: { postText: "Uno\n\n\n\nDos\n\n\n" } } });
+  assert.equal(sent.at(-1).json.text, "Uno\n\nDos");
+  await screenEvent({ name: "sendComment", state: { thread: { postId: "1", post: { id: 1 }, items: [] }, inputs: { commentText: "a\n \n\n\nb\n\n" } } });
+  assert.equal(sent.at(-1).json.text, "a\n\nb");
+});
+
+test("an attachment wins over a link in the text: no preview is read or sent", async () => {
+  const sent = [];
+  fakeKino(sent);
+  const text = "Mira https://youtu.be/abc y https://www.themoviedb.org/movie/1";
+  await screenEvent({ name: "publish", state: { attach: DUNE, feed: [], inputs: { postText: text } } });
+  // Only the post itself went out: no page head or oEmbed fetch, no TMDB lookup for the link.
+  assert.deepEqual(sent, [{ path: "/posts", json: { text, title: DUNE } }]);
+});
+
 test("nothing is posted without text or a title, and clearing drops the attachment", async () => {
   const sent = [];
   fakeKino(sent);

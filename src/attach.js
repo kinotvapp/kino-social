@@ -82,15 +82,17 @@ export function pickAttachment(key, ...lists) {
 export const canPublish = (text, attach) => String(text || "").trim().length > 0 || validAttachment(attach);
 
 /**
- * The POST /posts body. A TMDB or IMDb link in the text wins ([linkTitle]); without one, the attachment is the title.
- * Another link's preview ([link]) goes along as before: the server lets the link decide when the text has one.
+ * The POST /posts body. The attachment the person picked wins over any link in the text (owner, 2026-10-30): the link
+ * then stays plain text and no preview goes. Without one, a TMDB or IMDb link's title ([linkTitle]) or another link's
+ * preview ([link]) goes as before.
  */
 export function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null }) {
-  const title = linkTitle || (validAttachment(attach) ? attach : null);
+  const picked = validAttachment(attach) ? attach : null;
+  const title = picked || linkTitle;
   return {
     text,
     ...(title ? { title } : {}),
-    ...(link && link.title ? { link } : {}),
+    ...(!picked && !linkTitle && link && link.title ? { link } : {}),
     ...(communityId ? { communityId: Number(communityId) } : {}),
   };
 }
