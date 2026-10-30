@@ -8,6 +8,14 @@ Para instalarlo, abre Kino ▸ Plugins ▸ **De Kino** y toca **Instalar**. Nece
 **English.** A small social network inside Kino: share what you watch, comment, follow people and join communities.
 To install it, open Kino ▸ Plugins ▸ **From Kino** and tap **Install**. It needs Kino 0.9.77 or newer.
 
+## Moderation / Moderación
+
+**Español.** Las palabras ofensivas se ocultan (xxxx) antes de publicar. Cada publicación o comentario con palabras ocultas es un aviso;
+al tercero en 12 horas no puedes publicar ni comentar durante 12 horas. Los avisos vencen a las 12 horas.
+
+**English.** Offensive words are masked (xxxx) before posting. Each post or comment with masked words is a warning; the third within
+12 hours mutes posting and commenting for 12 hours. Warnings expire after 12 hours. The server counts them, so they cannot be skipped from the app.
+
 ## About this plugin
 
 A small social network inside Kino: a feed of what people write and watch, likes, one level of comments, profiles,
