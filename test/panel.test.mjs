@@ -68,6 +68,33 @@ test("no TMDB id: posts plain text with the name, no attached-title object", asy
   assert.ok(!("title" in sent.at(-1).json) && sent.at(-1).json.text.includes("Some Anime"));
 });
 
+test("setText and pickCommunity cache me/communities instead of re-fetching them every call", async () => {
+  const sent = [];
+  fakeKino(sent);
+  // No state yet (as if this were the first action after opening the panel): setText must fetch and cache both.
+  const first = await panelAction({ event: { trigger: "change", name: "setText", value: "a" }, context: { state: {} } });
+  assert.ok(first.state.me && first.state.communities);
+  assert.equal(sent.filter((s) => s.path === "/me").length, 1);
+  assert.equal(sent.filter((s) => s.path === "/communities").length, 1);
+  // The next action, given that cached state back, must not fetch either again.
+  const second = await panelAction({ event: { trigger: "change", name: "pickCommunity", value: "7" }, context: { state: first.state } });
+  assert.deepEqual(second.state.me, first.state.me);
+  assert.deepEqual(second.state.communities, first.state.communities);
+  assert.equal(sent.filter((s) => s.path === "/me").length, 1);
+  assert.equal(sent.filter((s) => s.path === "/communities").length, 1);
+});
+
+test('picking "Feed general" sends with no communityId, not the literal string "feed"', async () => {
+  const sent = [];
+  fakeKino(sent);
+  const context = { kind: "movie", title: "Dune", ids: {}, state: { text: "hola", communityId: "7" } };
+  const picked = await panelAction({ event: { trigger: "change", name: "pickCommunity", value: "feed" }, context });
+  assert.equal(picked.state.communityId, "feed");
+  const sentState = { ...context.state, ...picked.state };
+  await panelAction({ event: { trigger: "press", name: "send" }, context: { ...context, state: sentState } });
+  assert.ok(!("communityId" in sent.at(-1).json));
+});
+
 function T_noIdentity() {
   return "Kino Social necesita tu cuenta de Telegram";
 }

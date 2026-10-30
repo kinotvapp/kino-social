@@ -35,13 +35,44 @@ function attachFromContext(context) {
   return { kind: context.kind, tmdbId: id, title: context.title, year: context.year };
 }
 
+/** The "feed" sentinel (the dropdown's own default option) means "no community": `postBody` wants `null` for that. */
+const FEED = "feed";
+const communityIdForBody = (state) => (state.communityId && state.communityId !== FEED ? state.communityId : null);
+
 /** "Feed general" first, then the communities the person has joined (only those: she can only post there). */
 function communityOptions(communities) {
   const mine = (communities && communities.mine) || [];
   return [
-    { value: "feed", label: "Feed general", labelEn: "General feed" },
+    { value: FEED, label: T.feedOption[0], labelEn: T.feedOption[1] },
     ...mine.map((c) => ({ value: String(c.id), label: c.name })),
   ];
+}
+
+/**
+ * `me`/`communities` to carry in a `panelAction` response's `state` patch: whatever `state` already cached, else
+ * fetched once. `panel(context)` cannot write `state` itself (`player-panel.md#screen-mode`'s own result shape has
+ * no `state` field), and this tab sets no `refreshMs`, so `panel()` only redraws after a `panelAction` response —
+ * meaning this is the only place the cache can ever get seeded, and once it has, every later action just forwards it.
+ */
+async function carryCache(state) {
+  const out = {};
+  if (state.me) out.me = state.me;
+  else {
+    try {
+      out.me = await call("/me");
+    } catch (_) {
+      // leave it uncached; the next panel() draw or action tries again
+    }
+  }
+  if (state.communities) out.communities = state.communities;
+  else {
+    try {
+      out.communities = await call("/communities");
+    } catch (_) {
+      out.communities = { mine: [] };
+    }
+  }
+  return out;
 }
 
 function composeRoot(state, communities) {
@@ -49,7 +80,7 @@ function composeRoot(state, communities) {
     { type: "TextField", key: "text", multiline: true, maxLength: 500, value: state.text || "",
       hintText: T.commentHint[0], hintTextEn: T.commentHint[1], onChanged: "setText" },
     { type: "DropdownButton", key: "communityId", labelText: T.communities[0], labelTextEn: T.communities[1],
-      value: state.communityId ?? "feed", onChanged: "pickCommunity", options: communityOptions(communities) },
+      value: state.communityId ?? FEED, onChanged: "pickCommunity", options: communityOptions(communities) },
     { type: "Row", gap: 8, children: [
       { type: "ElevatedButton", key: "like", onPressed: "like", ...label(...T.likeButton) },
       { type: "ElevatedButton", key: "send", onPressed: "send", variant: "primary", ...label(...T.send) },
@@ -89,6 +120,7 @@ export async function panel(context) {
 /** `send`/`like`: the title attached when there's a TMDB id, else its name woven into plain text; no title either way. */
 async function postFromContext(event, context) {
   const state = context.state || {};
+  const cache = await carryCache(state);
   const attach = attachFromContext(context);
   const isSeries = context.kind === "series";
   const forceEmpty = event.name === "like";
@@ -106,10 +138,10 @@ async function postFromContext(event, context) {
     const fragment = plainTitleText(context);
     text = forceEmpty || !typed ? fragment : `${typed} — ${fragment}`;
   }
-  const json = postBody({ text, attach, season, episode, communityId: state.communityId });
+  const json = postBody({ text, attach, season, episode, communityId: communityIdForBody(state) });
   const post = await callFresh("/posts", { method: "POST", json });
   const [es, en] = moderationToast(post) || T.published;
-  return { state: { ...state, text: "" }, toast: es, toastEn: en };
+  return { state: { ...state, ...cache, text: "" }, toast: es, toastEn: en };
 }
 
 export async function panelAction({ event, context }) {
@@ -120,7 +152,7 @@ export async function panelAction({ event, context }) {
       case "like":
         return await postFromContext(event, context);
       case "setText":
-        return { state: { ...state, text: event.value } };
+        return { state: { ...state, ...(await carryCache(state)), text: event.value } };
       case "checkHandle": {
         const h = String(event.value || "").trim().replace(/^@/, "").toLowerCase();
         if (h.length < 3) return { state: { ...state, handleCheck: null } };
@@ -129,10 +161,11 @@ export async function panelAction({ event, context }) {
       case "pickHandle": {
         const values = event.values || {};
         const me = await callFresh("/me", { method: "PATCH", json: { handle: values.handleText, name: values.nameText } });
-        return { state: { ...state, me, handleCheck: null }, toast: `¡Listo! Ya eres @${me.handle}`, toastEn: `Done! You're @${me.handle}` };
+        const [es, en] = T.pickedHandle(me.handle);
+        return { state: { ...state, me, handleCheck: null }, toast: es, toastEn: en };
       }
       case "pickCommunity":
-        return { state: { ...state, communityId: event.value } };
+        return { state: { ...state, ...(await carryCache(state)), communityId: event.value } };
       default:
         return null;
     }

@@ -150,6 +150,9 @@ export const T = {
   // The player-panel tab (apiVersion 14 screen-kit): "Qué estás viendo" comment box, community picker, like/send.
   updateKino: ["Actualiza Kino para comentar aquí", "Update Kino to comment here"],
   likeButton: ["Me gusta", "Like"],
+  feedOption: ["Feed general", "General feed"],
+  /** "¡Listo! Ya eres @ana" — the toast after picking a @handle. */
+  pickedHandle: (handle) => [`¡Listo! Ya eres @${handle}`, `Done! You're @${handle}`],
 };
 
 /** "vio *Título*" for a movie, "vio T4 · E3 de *Serie*" for an episode. */

@@ -211,6 +211,7 @@ async function postNotices() {
 }
 
 // src/i18n.js
+var label = (es, en) => ({ labelText: es, labelTextEn: en });
 var T = {
   // Communities
   communities: ["Comunidades", "Communities"],
@@ -349,13 +350,32 @@ var T = {
   // A prefix: Kino writes the time after it (Text time, timeFormat clock).
   mutedUntilDialog: ["No podrás publicar ni comentar hasta las ", "You won't be able to post or comment until "],
   mutedUntilLine: ["No puedes publicar ni comentar hasta las ", "You can't post or comment until "],
-  ok: ["Entendido", "OK"]
+  // The panel's toast (screen-kit: a plain line, no dialog): no numbers, the time is in the dialog and the locked line.
+  panelOffensiveToast: ["Tu texto tenía palabras ofensivas y se ocultó.", "Your text had offensive words and was hidden."],
+  panelMutedToast: ["Por palabras ofensivas no puedes publicar ni comentar por ahora.", "Because of offensive words you can't post or comment for now."],
+  ok: ["Entendido", "OK"],
+  // The player-panel tab (apiVersion 14 screen-kit): "Qué estás viendo" comment box, community picker, like/send.
+  updateKino: ["Actualiza Kino para comentar aquí", "Update Kino to comment here"],
+  likeButton: ["Me gusta", "Like"],
+  feedOption: ["Feed general", "General feed"],
+  /** "¡Listo! Ya eres @ana" — the toast after picking a @handle. */
+  pickedHandle: (handle) => [`¡Listo! Ya eres @${handle}`, `Done! You're @${handle}`]
 };
 function watchedLine(item) {
   if (item.kind === "series" && Number.isInteger(item.season) && Number.isInteger(item.episode)) {
     return [`vio T${item.season} · E${item.episode}`, `watched S${item.season} · E${item.episode}`];
   }
   return item.kind === "series" ? ["está viendo la serie", "is watching the series"] : ["vio la película", "watched the movie"];
+}
+function likedLine(post2) {
+  const name = post2.user && post2.user.name || "";
+  const link = post2.link || {};
+  const kind = link.tmdb && link.tmdb.kind;
+  const title = link.title || "";
+  if (kind === "series" && Number.isInteger(link.season) && Number.isInteger(link.episode)) {
+    return [`A ${name} le gustó T${link.season} · E${link.episode} de ${title}`, `${name} liked S${link.season} · E${link.episode} of ${title}`];
+  }
+  return [`A ${name} le gustó ${title}`, `${name} liked ${title}`];
 }
 
 // src/ui/kit.js
@@ -405,9 +425,9 @@ function Tag([es, en], icon, props = {}) {
     ...props
   };
 }
-var Button = (label, onPressed, props = {}) => ({ type: "ElevatedButton", labelText: label[0], labelTextEn: label[1], onPressed, ...props });
-var TextBtn = (label, onPressed, props = {}) => ({ type: "TextButton", labelText: label[0], labelTextEn: label[1], onPressed, ...props });
-var IconBtn = (icon, label, onPressed, props = {}) => ({ type: "IconButton", icon, labelText: label[0], labelTextEn: label[1], onPressed, ...props });
+var Button = (label2, onPressed, props = {}) => ({ type: "ElevatedButton", labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
+var TextBtn = (label2, onPressed, props = {}) => ({ type: "TextButton", labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
+var IconBtn = (icon, label2, onPressed, props = {}) => ({ type: "IconButton", icon, labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
 var pagePadding = { compact: { x: 12, y: 12 }, medium: { x: 24, y: 12 }, expanded: { x: 32, y: 16 } };
 var count = (n) => n > 999 ? Math.floor(n / 100) / 10 + "k" : String(n);
 
@@ -440,6 +460,11 @@ function moderationDialog(response) {
   const n = Number.isInteger(m.strikes) && m.strikes > 0 ? Math.min(m.strikes, limit) : 1;
   const [es, en] = T.strikeWarning(n, limit);
   return { body: es, bodyEn: en, buttons: [okButton()] };
+}
+function moderationToast(response) {
+  const m = response && response.moderation;
+  if (!m || typeof m !== "object") return null;
+  return mutedUntil(m.mutedUntil) ? T.panelMutedToast : T.panelOffensiveToast;
 }
 function moderationState(response, now = Date.now()) {
   const m = response && response.moderation;
@@ -584,7 +609,7 @@ function postCard(post2, ctx, me, { selected = false, full = false } = {}) {
     children: [
       authorRow(post2, ctx, me, pfx),
       // The text as written, line breaks included (a post with an attached title may have none).
-      ...post2.text ? [Raw(post2.text, { maxLines: full ? void 0 : tv ? 4 : 12 })] : [],
+      ...post2.text ? [Raw(post2.text, { maxLines: full ? void 0 : tv ? 4 : 12 })] : post2.link && post2.link.tmdb ? [Txt(likedLine(post2), { maxLines: full ? void 0 : 2 })] : [],
       ...post2.link ? [linkCard(post2, ctx, pfx)] : [],
       ...!tv || full ? [actionsRow(post2, ctx, pfx, full)] : [{ type: "Row", gap: 16, children: [
         { type: "Row", gap: 4, crossAxisAlignment: "center", children: [{ type: "Icon", name: "heart", color: post2.liked ? "error" : "muted" }, Raw(count(post2.likes || 0), { style: "caption", color: "muted" })] },
@@ -775,9 +800,12 @@ function pickAttachment(key, ...lists) {
   return null;
 }
 var canPublish = (text, attach) => String(text || "").trim().length > 0 || validAttachment(attach);
-function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null }) {
+function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null, season = null, episode = null }) {
   const picked = validAttachment(attach) ? attach : null;
-  const title = picked || linkTitle;
+  let title = picked || linkTitle;
+  if (title && title.kind === "series" && Number.isInteger(season) && season > 0 && Number.isInteger(episode) && episode > 0) {
+    title = { ...title, season, episode };
+  }
   return {
     text,
     ...title ? { title } : {},
@@ -2673,6 +2701,162 @@ async function track(event) {
   return { ok: true };
 }
 
+// src/panel.js
+var toast2 = ([es, en]) => ({ toast: es, toastEn: en });
+var CLASSIC_PANEL = { title: "Kino Social", elements: [{ type: "status", text: T.updateKino[0], textEn: T.updateKino[1] }] };
+var screenResult = (root) => ({ format: "screen", title: "Kino Social", root });
+var noIdentityRoot = () => ({ type: "Column", padding: 16, children: [Txt(T.noIdentity), Txt(T.noIdentityText, { color: "muted" })] });
+function plainTitleText(context) {
+  const name = String(context.title || "").trim();
+  if (context.kind === "series" && Number.isInteger(context.season) && Number.isInteger(context.episode)) {
+    return `${name} — T${context.season}·E${context.episode}`;
+  }
+  return name;
+}
+function attachFromContext(context) {
+  const id = context && context.ids && context.ids.tmdb;
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return { kind: context.kind, tmdbId: id, title: context.title, year: context.year };
+}
+var FEED = "feed";
+var communityIdForBody = (state) => state.communityId && state.communityId !== FEED ? state.communityId : null;
+function communityOptions(communities) {
+  const mine = communities && communities.mine || [];
+  return [
+    { value: FEED, label: T.feedOption[0], labelEn: T.feedOption[1] },
+    ...mine.map((c) => ({ value: String(c.id), label: c.name }))
+  ];
+}
+async function carryCache(state) {
+  const out = {};
+  if (state.me) out.me = state.me;
+  else {
+    try {
+      out.me = await call("/me");
+    } catch (_) {
+    }
+  }
+  if (state.communities) out.communities = state.communities;
+  else {
+    try {
+      out.communities = await call("/communities");
+    } catch (_) {
+      out.communities = { mine: [] };
+    }
+  }
+  return out;
+}
+function composeRoot(state, communities) {
+  return { type: "Column", padding: 16, gap: 12, children: [
+    {
+      type: "TextField",
+      key: "text",
+      multiline: true,
+      maxLength: 500,
+      value: state.text || "",
+      hintText: T.commentHint[0],
+      hintTextEn: T.commentHint[1],
+      onChanged: "setText"
+    },
+    {
+      type: "DropdownButton",
+      key: "communityId",
+      labelText: T.communities[0],
+      labelTextEn: T.communities[1],
+      value: state.communityId ?? FEED,
+      onChanged: "pickCommunity",
+      options: communityOptions(communities)
+    },
+    { type: "Row", gap: 8, children: [
+      { type: "ElevatedButton", key: "like", onPressed: "like", ...label(...T.likeButton) },
+      { type: "ElevatedButton", key: "send", onPressed: "send", variant: "primary", ...label(...T.send) }
+    ] }
+  ] };
+}
+async function panel(context) {
+  if (!(context.features || []).includes("screen")) return CLASSIC_PANEL;
+  if (!savedSession()) return screenResult(noIdentityRoot());
+  const state = context.state || {};
+  let me = state.me;
+  if (!me) {
+    try {
+      me = await call("/me");
+    } catch (_) {
+      return screenResult(noIdentityRoot());
+    }
+  }
+  if (!me.handle) {
+    return screenResult(welcomeView({ me, handleCheck: state.handleCheck }, { device: context.device, size: context.size, lang: context.lang }));
+  }
+  let communities = state.communities;
+  if (!communities) {
+    try {
+      communities = await call("/communities");
+    } catch (_) {
+      communities = { mine: [] };
+    }
+  }
+  return screenResult(composeRoot(state, communities));
+}
+async function postFromContext(event, context) {
+  const state = context.state || {};
+  const cache = await carryCache(state);
+  const attach = attachFromContext(context);
+  const isSeries = context.kind === "series";
+  const forceEmpty = event.name === "like";
+  const typed = String(state.text || "").trim();
+  let text;
+  let season = null;
+  let episode = null;
+  if (attach) {
+    text = forceEmpty ? "" : typed;
+    if (isSeries) {
+      season = context.season;
+      episode = context.episode;
+    }
+  } else {
+    const fragment = plainTitleText(context);
+    text = forceEmpty || !typed ? fragment : `${typed} — ${fragment}`;
+  }
+  const json = postBody({ text, attach, season, episode, communityId: communityIdForBody(state) });
+  const post2 = await callFresh("/posts", { method: "POST", json });
+  const [es, en] = moderationToast(post2) || T.published;
+  return { state: { ...state, ...cache, text: "" }, toast: es, toastEn: en };
+}
+async function panelAction({ event, context }) {
+  const state = context && context.state || {};
+  try {
+    switch (event.name) {
+      case "send":
+      case "like":
+        return await postFromContext(event, context);
+      case "setText":
+        return { state: { ...state, ...await carryCache(state), text: event.value } };
+      case "checkHandle": {
+        const h = String(event.value || "").trim().replace(/^@/, "").toLowerCase();
+        if (h.length < 3) return { state: { ...state, handleCheck: null } };
+        return { state: { ...state, handleCheck: await call("/handles/" + encodeURIComponent(h)) } };
+      }
+      case "pickHandle": {
+        const values = event.values || {};
+        const me = await callFresh("/me", { method: "PATCH", json: { handle: values.handleText, name: values.nameText } });
+        const [es, en] = T.pickedHandle(me.handle);
+        return { state: { ...state, me, handleCheck: null }, toast: es, toastEn: en };
+      }
+      case "pickCommunity":
+        return { state: { ...state, ...await carryCache(state), communityId: event.value } };
+      default:
+        return null;
+    }
+  } catch (e) {
+    const code = e instanceof ApiError ? e.code : "offline";
+    if (code === "rate_limited") return toast2(T.tooFast);
+    if (code === "not_member") return toast2(T.notMember);
+    if (code === "muted") return toast2(T.panelMutedToast);
+    return toast2(T.offline);
+  }
+}
+
 // src/plugin.js
 async function screen({ state, route, device, size, lang }) {
   const s = state || {};
@@ -2693,6 +2877,8 @@ async function job() {
 }
 export {
   job,
+  panel,
+  panelAction,
   screen,
   screenEvent,
   track
