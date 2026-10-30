@@ -147,6 +147,9 @@ export const T = {
   panelOffensiveToast: ["Tu texto tenía palabras ofensivas y se ocultó.", "Your text had offensive words and was hidden."],
   panelMutedToast: ["Por palabras ofensivas no puedes publicar ni comentar por ahora.", "Because of offensive words you can't post or comment for now."],
   ok: ["Entendido", "OK"],
+  // The player-panel tab (apiVersion 14 screen-kit): "Qué estás viendo" comment box, community picker, like/send.
+  updateKino: ["Actualiza Kino para comentar aquí", "Update Kino to comment here"],
+  likeButton: ["Me gusta", "Like"],
 };
 
 /** "vio *Título*" for a movie, "vio T4 · E3 de *Serie*" for an episode. */

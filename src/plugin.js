@@ -7,6 +7,7 @@ import { mainView, meView, postView, problemView, userView, welcomeView } from "
 
 export { screenEvent } from "./events.js";
 export { track } from "./track.js";
+export { panel, panelAction } from "./panel.js";
 
 /** A pure view of the state Kino keeps; the reserved `open` event loads it. */
 export async function screen({ state, route, device, size, lang }) {
