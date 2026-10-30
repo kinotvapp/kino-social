@@ -81,6 +81,15 @@ export const T = {
   watchedHint: ["Apaga lo que no quieras mostrar en tu perfil", "Switch off what you don't want on your profile"],
   noWatched: ["Cuando veas algo en Kino aparecerá aquí", "What you watch in Kino will show here"],
   theirWatched: ["Ha visto", "Watched"],
+  // Creator profiles (owner, 2026-10-30): the badge and the "plugins they've built" section, both from the plugin's
+  // own manifest (CREATOR-PROFILE-SPEC.md), never a thing the person sets.
+  creatorTag: ["Creador", "Creator"],
+  creatorPlugins: ["Plugins que ha creado", "Plugins they've built"],
+  hidePlugin: ["Ocultar", "Hide"],
+  unhidePlugin: ["Mostrar", "Unhide"],
+  hiddenPlugins: ["Ocultos", "Hidden"],
+  openPlugin: ["Instalar", "Install"],
+  openPluginUrlHint: ["Ábrelo en Kino con esta dirección:", "Open it in Kino with this address:"],
   posts: ["Publicaciones", "Posts"],
   noPosts: ["Sin publicaciones todavía", "No posts yet"],
   noPeople: ["Aún no hay nadie más", "Nobody else here yet"],

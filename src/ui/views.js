@@ -7,7 +7,7 @@ import { muteLine, mutedUntil } from "../moderation.js";
 import { activityCard, commentRow, feedItem, postCard } from "./cards.js";
 import { communitiesTab } from "./communities.js";
 import { MAX_QUERY, attachKey } from "../attach.js";
-import { Avatar, Button, IconBtn, NameBlock, Raw, TextBtn, Txt, isTv, pagePadding } from "./kit.js";
+import { Avatar, Button, IconBtn, NameBlock, Raw, Tag, TextBtn, Txt, isTv, pagePadding } from "./kit.js";
 
 const MAX_TEXT = 500;
 
@@ -205,7 +205,10 @@ export function feedTab(s, ctx, src = generalSource(s)) {
   ] };
 }
 
-function profileHeader(p, own, ctx) {
+/** At least one not-hidden attached plugin earns the badge -- never a thing the person switches on themselves. */
+const isCreator = (plugins) => (plugins || []).some((pl) => !pl.hidden);
+
+function profileHeader(p, own, ctx, plugins) {
   const u = p.user;
   const stat = (n, [es, en]) => ({ type: "Column", flex: 1, crossAxisAlignment: "center", children: [Raw(String(n), { style: "h4", bold: true }), Txt([es, en], { style: "caption", color: "muted" })] });
   return {
@@ -214,7 +217,10 @@ function profileHeader(p, own, ctx) {
       { type: "Row", gap: 16, crossAxisAlignment: "center", children: [
         Avatar(u, isTv(ctx) ? 48 : 36),
         { type: "Column", flex: 1, gap: 4, children: [
-          Raw(u.name, { style: "h3", maxLines: 1 }),
+          { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+            Raw(u.name, { style: "h3", maxLines: 1 }),
+            ...(isCreator(plugins) ? [Tag(T.creatorTag, "bolt", { key: "creatorTag" })] : []),
+          ] },
           ...(u.handle ? [Raw("@" + u.handle, { color: "muted" })] : []),
         ] },
       ] },
@@ -243,6 +249,39 @@ function watchedGrid(items, ctx, { own = false } = {}) {
     })) }];
 }
 
+/** One attached plugin: tapping it opens Kino's own "install this plugin" screen, pre-filled with its address
+ * (go.installPlugin, CREATOR-PROFILE-SPEC.md §4) -- never a search, since the row already names the exact repo. */
+function pluginRow(pl, { own = false } = {}) {
+  const addr = pl.repo;
+  return {
+    type: "Card", key: "plg" + addr, padding: 12, onTap: { go: { installPlugin: { repo: addr } } }, children: [
+      { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+        { type: "Column", flex: 1, gap: 2, children: [
+          Raw(pl.name, { style: "h5", bold: true, maxLines: 1 }),
+          ...(pl.description ? [Raw(pl.description, { style: "caption", color: "muted", maxLines: 2 })] : []),
+          Txt([`★ ${pl.stars}`, `★ ${pl.stars}`], { style: "caption", color: "muted" }),
+        ] },
+        ...(own ? [TextBtn(pl.hidden ? T.unhidePlugin : T.hidePlugin,
+          { event: pl.hidden ? "unhidePlugin" : "hidePlugin", arg: addr }, { key: "hideBtn" + addr })] : []),
+      ] },
+    ],
+  };
+}
+
+/** "Plugins que ha creado" (§6): nothing at all when there is nothing attached -- never "no plugins yet", since most
+ * people have none. On your own profile ([own]), a hidden one still gets its own "Ocultos" list to unhide from,
+ * even when nothing is left to show up top. */
+function creatorPluginsSection(plugins, { own = false } = {}) {
+  const list = plugins || [];
+  if (!list.length) return [];
+  const visible = list.filter((pl) => !pl.hidden);
+  const hidden = own ? list.filter((pl) => pl.hidden) : [];
+  return [
+    ...(visible.length ? [Txt(T.creatorPlugins, { style: "h4" }), ...visible.map((pl) => pluginRow(pl, { own }))] : []),
+    ...(hidden.length ? [Txt(T.hiddenPlugins, { style: "caption", color: "muted" }), ...hidden.map((pl) => pluginRow(pl, { own }))] : []),
+  ];
+}
+
 const MONTHS = [["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
   ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]];
 
@@ -260,7 +299,7 @@ function profileTab(s, ctx) {
   if (!p) return { type: "Column", padding: pagePadding, gap: 12, children: skeletonFeed().slice(0, 1) };
   const mine = s.myActivity || [];
   return { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
-    profileHeader(p, true, ctx),
+    profileHeader(p, true, ctx, s.myPlugins),
     { type: "Card", key: "shareCard", padding: 16, gap: 4, children: [
       { type: "Switch", key: "share", value: !!s.me.shareActivity, labelText: T.share[0], labelTextEn: T.share[1], onChanged: "toggleShare" },
       Txt(T.shareHint, { style: "caption", color: "muted" }),
@@ -277,6 +316,7 @@ function profileTab(s, ctx) {
       ] })) : [Txt(T.noWatched, { color: "muted" })]),
     Txt(T.posts, { style: "h4" }),
     ...((p.posts || []).length ? p.posts.map((post) => postCard(post, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })]),
+    ...creatorPluginsSection(s.myPlugins, { own: true }),
     TextBtn(["Cerrar sesión en todos tus aparatos", "Log out on all your devices"], "logoutAll",
       { key: "logoutAll", confirm: "¿Cerrar sesión en todos tus aparatos?", confirmEn: "Log out on all your devices?" }),
     editProfileSheet(s),
@@ -364,11 +404,12 @@ export function userView(s, ctx) {
   const p = s.user;
   const body = !p ? { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] }
     : { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
-      profileHeader(p, s.me && p.user.id === s.me.id, ctx),
+      profileHeader(p, s.me && p.user.id === s.me.id, ctx, p.plugins),
       Txt(T.theirWatched, { style: "h4" }),
       ...watchedGrid(p.activity || [], ctx),
       Txt(T.posts, { style: "h4" }),
       ...((p.posts || []).length ? p.posts.map((post) => postCard(post, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })]),
+      ...creatorPluginsSection(p.plugins, { own: false }),
     ] }] };
   return { type: "Scaffold", appBar: { type: "AppBar", title: p ? p.user.name : T.profile[0], titleEn: p ? p.user.name : T.profile[1],
     leading: IconBtn("arrow_back", T.back, "back") }, body };

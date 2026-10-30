@@ -287,6 +287,15 @@ var T = {
   watchedHint: ["Apaga lo que no quieras mostrar en tu perfil", "Switch off what you don't want on your profile"],
   noWatched: ["Cuando veas algo en Kino aparecerá aquí", "What you watch in Kino will show here"],
   theirWatched: ["Ha visto", "Watched"],
+  // Creator profiles (owner, 2026-10-30): the badge and the "plugins they've built" section, both from the plugin's
+  // own manifest (CREATOR-PROFILE-SPEC.md), never a thing the person sets.
+  creatorTag: ["Creador", "Creator"],
+  creatorPlugins: ["Plugins que ha creado", "Plugins they've built"],
+  hidePlugin: ["Ocultar", "Hide"],
+  unhidePlugin: ["Mostrar", "Unhide"],
+  hiddenPlugins: ["Ocultos", "Hidden"],
+  openPlugin: ["Instalar", "Install"],
+  openPluginUrlHint: ["Ábrelo en Kino con esta dirección:", "Open it in Kino with this address:"],
   posts: ["Publicaciones", "Posts"],
   noPosts: ["Sin publicaciones todavía", "No posts yet"],
   noPeople: ["Aún no hay nadie más", "Nobody else here yet"],
@@ -382,6 +391,18 @@ function NameBlock(user, extra = [], { time } = {}) {
       ...meta.length ? [{ type: "Row", gap: 4, crossAxisAlignment: "center", children: meta }] : [],
       ...extra
     ]
+  };
+}
+function Tag([es, en], icon, props = {}) {
+  return {
+    type: "Row",
+    gap: 4,
+    crossAxisAlignment: "center",
+    color: "primaryContainer",
+    borderRadius: "full",
+    padding: { x: 8, y: 2 },
+    children: [{ type: "Icon", name: icon }, { type: "Text", text: es, textEn: en, style: "caption" }],
+    ...props
   };
 }
 var Button = (label, onPressed, props = {}) => ({ type: "ElevatedButton", labelText: label[0], labelTextEn: label[1], onPressed, ...props });
@@ -1049,7 +1070,8 @@ function feedTab(s, ctx, src = generalSource(s)) {
     composerSheet(s)
   ] };
 }
-function profileHeader(p, own, ctx) {
+var isCreator = (plugins) => (plugins || []).some((pl) => !pl.hidden);
+function profileHeader(p, own, ctx, plugins) {
   const u = p.user;
   const stat = (n, [es, en]) => ({ type: "Column", flex: 1, crossAxisAlignment: "center", children: [Raw(String(n), { style: "h4", bold: true }), Txt([es, en], { style: "caption", color: "muted" })] });
   return {
@@ -1062,7 +1084,10 @@ function profileHeader(p, own, ctx) {
       { type: "Row", gap: 16, crossAxisAlignment: "center", children: [
         Avatar(u, isTv(ctx) ? 48 : 36),
         { type: "Column", flex: 1, gap: 4, children: [
-          Raw(u.name, { style: "h3", maxLines: 1 }),
+          { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+            Raw(u.name, { style: "h3", maxLines: 1 }),
+            ...isCreator(plugins) ? [Tag(T.creatorTag, "bolt", { key: "creatorTag" })] : []
+          ] },
           ...u.handle ? [Raw("@" + u.handle, { color: "muted" })] : []
         ] }
       ] },
@@ -1101,6 +1126,39 @@ function watchedGrid(items, ctx, { own = false } = {}) {
     }))
   }];
 }
+function pluginRow(pl, { own = false } = {}) {
+  const addr = pl.repo;
+  return {
+    type: "Card",
+    key: "plg" + addr,
+    padding: 12,
+    onTap: { go: { installPlugin: { repo: addr } } },
+    children: [
+      { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+        { type: "Column", flex: 1, gap: 2, children: [
+          Raw(pl.name, { style: "h5", bold: true, maxLines: 1 }),
+          ...pl.description ? [Raw(pl.description, { style: "caption", color: "muted", maxLines: 2 })] : [],
+          Txt([`★ ${pl.stars}`, `★ ${pl.stars}`], { style: "caption", color: "muted" })
+        ] },
+        ...own ? [TextBtn(
+          pl.hidden ? T.unhidePlugin : T.hidePlugin,
+          { event: pl.hidden ? "unhidePlugin" : "hidePlugin", arg: addr },
+          { key: "hideBtn" + addr }
+        )] : []
+      ] }
+    ]
+  };
+}
+function creatorPluginsSection(plugins, { own = false } = {}) {
+  const list = plugins || [];
+  if (!list.length) return [];
+  const visible = list.filter((pl) => !pl.hidden);
+  const hidden = own ? list.filter((pl) => pl.hidden) : [];
+  return [
+    ...visible.length ? [Txt(T.creatorPlugins, { style: "h4" }), ...visible.map((pl) => pluginRow(pl, { own }))] : [],
+    ...hidden.length ? [Txt(T.hiddenPlugins, { style: "caption", color: "muted" }), ...hidden.map((pl) => pluginRow(pl, { own }))] : []
+  ];
+}
 var MONTHS = [
   ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
   ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -1117,7 +1175,7 @@ function profileTab(s, ctx) {
   if (!p) return { type: "Column", padding: pagePadding, gap: 12, children: skeletonFeed().slice(0, 1) };
   const mine = s.myActivity || [];
   return { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
-    profileHeader(p, true, ctx),
+    profileHeader(p, true, ctx, s.myPlugins),
     { type: "Card", key: "shareCard", padding: 16, gap: 4, children: [
       { type: "Switch", key: "share", value: !!s.me.shareActivity, labelText: T.share[0], labelTextEn: T.share[1], onChanged: "toggleShare" },
       Txt(T.shareHint, { style: "caption", color: "muted" })
@@ -1156,6 +1214,7 @@ function profileTab(s, ctx) {
     })) : [Txt(T.noWatched, { color: "muted" })],
     Txt(T.posts, { style: "h4" }),
     ...(p.posts || []).length ? p.posts.map((post2) => postCard(post2, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })],
+    ...creatorPluginsSection(s.myPlugins, { own: true }),
     TextBtn(
       ["Cerrar sesión en todos tus aparatos", "Log out on all your devices"],
       "logoutAll",
@@ -1280,11 +1339,12 @@ function postView(s, ctx) {
 function userView(s, ctx) {
   const p = s.user;
   const body = !p ? { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] } : { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
-    profileHeader(p, s.me && p.user.id === s.me.id, ctx),
+    profileHeader(p, s.me && p.user.id === s.me.id, ctx, p.plugins),
     Txt(T.theirWatched, { style: "h4" }),
     ...watchedGrid(p.activity || [], ctx),
     Txt(T.posts, { style: "h4" }),
-    ...(p.posts || []).length ? p.posts.map((post2) => postCard(post2, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })]
+    ...(p.posts || []).length ? p.posts.map((post2) => postCard(post2, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })],
+    ...creatorPluginsSection(p.plugins, { own: false })
   ] }] };
   return { type: "Scaffold", appBar: {
     type: "AppBar",
@@ -2241,8 +2301,8 @@ async function loadFeed(state) {
   return { feed: page.items, next: page.next, feedTag: page.etag, newer: [] };
 }
 async function loadProfile(me) {
-  const [p, mine] = await Promise.all([call("/users/" + me.id), call("/me/activity")]);
-  return { profile: p, myActivity: mine.items };
+  const [p, mine, plugins] = await Promise.all([call("/users/" + me.id), call("/me/activity"), call("/me/plugins?all=1")]);
+  return { profile: p, myActivity: mine.items, myPlugins: plugins.plugins };
 }
 async function loadCommunity(id) {
   const community = await call("/communities/" + id);
@@ -2503,9 +2563,18 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         const onItsPage = wasOpen && route && route.name === "post";
         return { state: { ...out, ...onItsPage ? { view: "main" } : {} }, ...onItsPage ? { route: { pop: true } } : {}, ...toast(T.deleted) };
       }
-      case "openUser":
+      case "openUser": {
         if (s.me && sameId(arg, s.me.id)) return { route: { push: "me", params: {} }, state: { ...await loadProfile(s.me) } };
-        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) } };
+        const [user, plugins] = await Promise.all([call("/users/" + arg), call("/users/" + arg + "/plugins")]);
+        return { route: { push: "user", params: { id: String(arg) } }, state: { user: { ...user, plugins: plugins.plugins } } };
+      }
+      case "hidePlugin":
+      case "unhidePlugin": {
+        await callFresh(`/me/plugins/${arg}/${name === "hidePlugin" ? "hide" : "unhide"}`, { method: "POST" });
+        const hidden = name === "hidePlugin";
+        const myPlugins = (s.myPlugins || []).map((pl) => pl.repo === arg ? { ...pl, hidden } : pl);
+        return { state: { myPlugins } };
+      }
       case "back": {
         const out = { view: "main" };
         if (s.feed === void 0) Object.assign(out, await loadFeed(s));

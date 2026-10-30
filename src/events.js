@@ -48,8 +48,10 @@ async function loadFeed(state) {
 }
 
 async function loadProfile(me) {
-  const [p, mine] = await Promise.all([call("/users/" + me.id), call("/me/activity")]);
-  return { profile: p, myActivity: mine.items };
+  // myPlugins carries every attached repo, hidden ones included (`?all=1`) -- the own profile is the one place that
+  // needs them, to render the "Ocultos" list (CREATOR-PROFILE-SPEC.md §6).
+  const [p, mine, plugins] = await Promise.all([call("/users/" + me.id), call("/me/activity"), call("/me/plugins?all=1")]);
+  return { profile: p, myActivity: mine.items, myPlugins: plugins.plugins };
 }
 
 async function loadCommunity(id) {
@@ -312,9 +314,18 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         const onItsPage = wasOpen && route && route.name === "post";
         return { state: { ...out, ...(onItsPage ? { view: "main" } : {}) }, ...(onItsPage ? { route: { pop: true } } : {}), ...toast(T.deleted) };
       }
-      case "openUser":
+      case "openUser": {
         if (s.me && sameId(arg, s.me.id)) return { route: { push: "me", params: {} }, state: { ...(await loadProfile(s.me)) } };
-        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) } };
+        const [user, plugins] = await Promise.all([call("/users/" + arg), call("/users/" + arg + "/plugins")]);
+        return { route: { push: "user", params: { id: String(arg) } }, state: { user: { ...user, plugins: plugins.plugins } } };
+      }
+      case "hidePlugin":
+      case "unhidePlugin": {
+        await callFresh(`/me/plugins/${arg}/${name === "hidePlugin" ? "hide" : "unhide"}`, { method: "POST" });
+        const hidden = name === "hidePlugin";
+        const myPlugins = (s.myPlugins || []).map((pl) => (pl.repo === arg ? { ...pl, hidden } : pl));
+        return { state: { myPlugins } };
+      }
       case "back": {
         // Back from a post, a person or a community lands on the main tabs (loading the feed when a notice opened us deep).
         const out = { view: "main" };

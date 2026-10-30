@@ -36,6 +36,16 @@ export function NameBlock(user, extra = [], { time } = {}) {
   };
 }
 
+/** A small rounded tag, an icon and a word on a filled background -- the same shape as a community's "Privada" mark. */
+export function Tag([es, en], icon, props = {}) {
+  return {
+    type: "Row", gap: 4, crossAxisAlignment: "center", color: "primaryContainer", borderRadius: "full",
+    padding: { x: 8, y: 2 },
+    children: [{ type: "Icon", name: icon }, { type: "Text", text: es, textEn: en, style: "caption" }],
+    ...props,
+  };
+}
+
 export const Button = (label, onPressed, props = {}) => ({ type: "ElevatedButton", labelText: label[0], labelTextEn: label[1], onPressed, ...props });
 export const TextBtn = (label, onPressed, props = {}) => ({ type: "TextButton", labelText: label[0], labelTextEn: label[1], onPressed, ...props });
 export const IconBtn = (icon, label, onPressed, props = {}) => ({ type: "IconButton", icon, labelText: label[0], labelTextEn: label[1], onPressed, ...props });
