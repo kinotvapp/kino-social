@@ -3,6 +3,7 @@
 // that picks the @handle.
 
 import { T } from "../i18n.js";
+import { muteLine, mutedUntil } from "../moderation.js";
 import { activityCard, commentRow, feedItem, postCard } from "./cards.js";
 import { communitiesTab } from "./communities.js";
 import { Avatar, Button, IconBtn, NameBlock, Raw, TextBtn, Txt, isTv, pagePadding } from "./kit.js";
@@ -11,24 +12,30 @@ const MAX_TEXT = 500;
 
 // ---- pieces ----------------------------------------------------------------------------------------------------------
 
+/** While the server says the person is muted (moderation), the end of it; else 0. */
+const muted = (s) => mutedUntil(s.mutedUntil);
+
 function composerPrompt(s) {
+  const until = muted(s);
   return {
     type: "Card", key: "prompt", variant: "outlined", padding: 12, borderRadius: "large",
-    onTap: { ui: [{ open: "composer" }] },
+    onTap: { ui: [{ open: "composer" }] }, ...(until ? { enabledAt: until } : {}),
     children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-      Avatar(s.me), Txt(T.prompt, { color: "muted", flex: 1 }), { type: "Icon", name: "edit", color: "primary" },
+      Avatar(s.me), until ? muteLine(until, { flex: 1 }) : Txt(T.prompt, { color: "muted", flex: 1 }), { type: "Icon", name: "edit", color: "primary" },
     ] }],
   };
 }
 
 function composerSheet(s) {
+  const until = muted(s);
+  const lock = until ? { enabled: false } : {};
   return {
     type: "BottomSheet", key: "composer", title: T.compose[0], titleEn: T.compose[1],
     children: [{ type: "Form", key: "composeForm", gap: 12, onSubmit: { event: "publish", timeoutMs: 28000 }, children: [
       { type: "TextField", key: "postText", multiline: true, maxLines: 6, maxLength: MAX_TEXT, required: true,
-        labelText: T.prompt[0], labelTextEn: T.prompt[1], hintText: T.postHint[0], hintTextEn: T.postHint[1] },
-      Txt(T.aiNote, { style: "caption", color: "muted" }),
-      { type: "ElevatedButton", key: "publish", icon: "send", labelText: T.publish[0], labelTextEn: T.publish[1], submit: true, fill: true },
+        labelText: T.prompt[0], labelTextEn: T.prompt[1], hintText: T.postHint[0], hintTextEn: T.postHint[1], ...lock },
+      until ? muteLine(until) : Txt(T.aiNote, { style: "caption", color: "muted" }),
+      { type: "ElevatedButton", key: "publish", icon: "send", labelText: T.publish[0], labelTextEn: T.publish[1], submit: true, fill: true, ...lock },
     ] }],
   };
 }
@@ -84,31 +91,22 @@ function feedList(s, ctx, src = generalSource(s)) {
     empty: src.empty || emptyFeed() };
 }
 
-/** The post and its comments, without the box to write one. */
-function threadItems(s, ctx) {
+function threadBody(s, ctx, { pane = false } = {}) {
   const th = s.thread;
-  const comments = th.items || [];
-  return [
-    postCard(th.post, { ...ctx, device: "phone" }, s.me, { full: true }),
-    Txt(T.comments, { key: "commentsTitle", style: "h5", bold: true, margin: { top: 4 } }),
-    ...(comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { key: "noComments", color: "muted" })]),
-  ];
-}
-
-/** The box to write a comment and its send button: a button, so Kino shows it busy while the comment is saved. */
-function commentBox() {
-  const send = { event: "sendComment", timeoutMs: 20000 };
-  return { type: "Row", key: "commentBox", gap: 8, crossAxisAlignment: "center", children: [
-    { type: "TextField", key: "commentText", flex: 1, maxLength: 300, labelText: T.commentHint[0], labelTextEn: T.commentHint[1], onSubmitted: send },
-    IconBtn("send", T.send, send, { key: "sendComment" }),
-  ] };
-}
-
-function threadBody(s, ctx) {
-  if (!s.thread || !s.thread.post) {
+  if (!th || !th.post) {
     return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
   }
-  return [...threadItems(s, ctx), commentBox()];
+  const comments = th.items || [];
+  const until = muted(s);
+  return [
+    postCard(th.post, { ...ctx, device: "phone" }, s.me, { full: true }),
+    Txt(T.comments, { style: "h5", bold: true, margin: { top: 4 } }),
+    ...(comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { color: "muted" })]),
+    { type: "TextField", key: "commentText", maxLength: 300, labelText: T.commentHint[0], labelTextEn: T.commentHint[1],
+      onSubmitted: "sendComment", trailingIcon: "send", trailingLabel: T.send[0], trailingLabelEn: T.send[1], onTrailingTap: "sendComment",
+      ...(until ? { enabled: false } : {}) },
+    ...(until ? [muteLine(until)] : []),
+  ];
 }
 
 // ---- tabs ------------------------------------------------------------------------------------------------------------
@@ -118,6 +116,7 @@ export function feedTab(s, ctx, src = generalSource(s)) {
     return { type: "Column", flex: 1, children: [
       feedList(s, ctx, src),
       composerSheet(s),
+      { type: "BottomSheet", key: "thread", title: T.post[0], titleEn: T.post[1], onClose: "threadClosed", children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] },
     ] };
   }
   // TV: the feed on the left, the chosen post on the right (OK on a card opens it there); writing from the FAB-like
@@ -125,13 +124,15 @@ export function feedTab(s, ctx, src = generalSource(s)) {
   return { type: "Row", flex: 1, gap: 24, padding: { x: 32, y: 16 }, children: [
     { type: "Column", flex: 7, gap: 12, children: [
       { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-        ...(src.canPost ? [Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", autofocus: true })] : []),
+        ...(src.canPost ? [Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", autofocus: true,
+          ...(muted(s) ? { enabledAt: muted(s) } : {}) })] : []),
+        ...(src.canPost && muted(s) ? [muteLine(muted(s))] : []),
         ...(src.key === "feed" && newerBanner(s) ? [newerBanner(s)] : []),
       ] },
       { ...feedList(s, ctx, src), padding: 0 },
     ] },
     { type: "Card", key: "pane", flex: 5, background: "surfaceVariant", padding: 16, canRequestFocus: !(s.thread && s.thread.post),
-      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] }] },
+      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx, { pane: true }) }] }] },
     composerSheet(s),
   ] };
 }
@@ -252,17 +253,18 @@ function peopleTab(s, ctx) {
 // ---- the root --------------------------------------------------------------------------------------------------------
 
 export function mainView(s, ctx) {
-  const tab = ["feed", "communities", "people"].includes(s.tab) ? s.tab : "feed";
+  const tab = ["feed", "communities", "profile", "people"].includes(s.tab) ? s.tab : "feed";
   const unread = s.unread || 0;
   const tabs = { type: "TabBar", key: "tabs", value: tab, onChanged: "tab", tabs: [
     { value: "feed", label: T.feed[0], labelEn: T.feed[1] },
     { value: "communities", label: T.communities[0], labelEn: T.communities[1] },
     { value: "people", label: T.people[0], labelEn: T.people[1] },
   ] };
-  // Your profile, top right (as in most social apps), opens its own page; its badge says what is new for you.
-  const me = IconBtn("person", T.profile, "openProfile", { key: "openProfile",
+  // Your profile, top right (as in most social apps); its badge says what is new for you.
+  const me = IconBtn("person", T.profile, "openProfile", { key: "openProfile", selected: tab === "profile",
     ...(unread ? { badge: { text: String(Math.min(unread, 99)) } } : {}) });
-  const body = tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
+  const body = tab === "profile" ? profileTab(s, ctx) : tab === "people" ? peopleTab(s, ctx)
+    : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
   return {
     type: "Scaffold",
     every: { ms: 60000, event: "tick" },
@@ -275,20 +277,10 @@ export function mainView(s, ctx) {
   };
 }
 
-/** Your own profile: a page over the tabs, with the back arrow. */
-export function meView(s, ctx) {
-  return { type: "Scaffold", appBar: { type: "AppBar", title: T.profile[0], titleEn: T.profile[1],
-    leading: IconBtn("arrow_back", T.back, "back") }, body: profileTab(s, ctx) };
-}
-
-/** A post as a chat: the post and its comments in a list that opens at, and follows, the newest; the box below it. */
 export function postView(s, ctx) {
-  const appBar = { type: "AppBar", title: T.post[0], titleEn: T.post[1], leading: IconBtn("arrow_back", T.back, "back") };
-  if (!s.thread || !s.thread.post) return { type: "Scaffold", appBar, body: { type: "Column", padding: pagePadding, children: threadBody(s, ctx) } };
-  return { type: "Scaffold", appBar, body: { type: "Column", flex: 1, children: [
-    { type: "ListView", key: "threadList", flex: 1, gap: 12, padding: pagePadding, stickToBottom: true, newItemsHint: true, items: threadItems(s, ctx) },
-    { type: "Column", padding: { x: 12, y: 8 }, children: [commentBox()] },
-  ] } };
+  return { type: "Scaffold", appBar: { type: "AppBar", title: T.post[0], titleEn: T.post[1],
+    leading: IconBtn("arrow_back", T.back, "back") },
+  body: { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 12, maxWidth: 640, alignSelf: "center", fill: true, children: threadBody(s, ctx) }] } };
 }
 
 export function userView(s, ctx) {

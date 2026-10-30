@@ -167,24 +167,20 @@ export function feedItem(item, ctx, me, selectedId) {
   return null;
 }
 
-/** A comment as a chat bubble: yours on the right, without your name; everyone else's on the left, under their avatar. */
+/** A comment: the avatar, then a bubble with the name, the text and when. */
 export function commentRow(c, me) {
-  const mine = !!me && String(c.user.id) === String(me.id);
-  const when = { type: "Text", time: c.createdAt, style: "caption", color: "muted" };
-  const bubble = {
-    type: "Card", flex: 5, color: mine ? "primaryContainer" : "surfaceVariant", padding: { x: 12, y: 8 }, gap: 4,
-    // The pointed corner sits on the speaker's side.
-    borderRadius: mine ? { topStart: "large", topEnd: "small", bottomStart: "large", bottomEnd: "large" }
-      : { topStart: "small", topEnd: "large", bottomStart: "large", bottomEnd: "large" },
-    children: mine
-      ? [Raw(c.text), { type: "Row", mainAxisAlignment: "end", children: [when] }]
-      : [{ type: "Row", gap: 8, children: [Raw(c.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 }), when] }, Raw(c.text)],
-  };
-  const room = { type: "Spacer", flex: 1 };
+  const mine = me && c.user.id === me.id;
   return {
     type: "Row", key: "c" + c.id, gap: 8, crossAxisAlignment: "start",
-    children: mine ? [room, bubble]
-      : [{ type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] }, bubble, room],
+    children: [
+      { type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] },
+      { type: "Card", flex: 1, color: mine ? "primaryContainer" : "surfaceVariant", padding: { x: 12, y: 8 }, gap: 4,
+        borderRadius: { topStart: "small", topEnd: "large", bottomStart: "large", bottomEnd: "large" },
+        children: [
+          { type: "Row", gap: 8, children: [Raw(c.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 }), { type: "Text", time: c.createdAt, style: "caption", color: "muted" }] },
+          Raw(c.text),
+        ] },
+    ],
   };
 }
 

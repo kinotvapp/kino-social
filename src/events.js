@@ -5,6 +5,7 @@ import { ApiError, call, callFresh, login, savedSession } from "./api.js";
 import { syncActivity } from "./activity.js";
 import { T } from "./i18n.js";
 import { clean } from "./swear.js";
+import { moderationDialog, moderationState, muteDialog, mutedUntil } from "./moderation.js";
 import { linkPreview } from "./linkpreview.js";
 import { titleHint } from "./titlelink.js";
 
@@ -19,6 +20,8 @@ function failure(e) {
   if (code === "slug_taken") return toast(T.slugTaken);
   if (["bad_name", "bad_slug", "bad_description"].includes(code)) return toast(T.badCommunity);
   if (code === "not_member") return toast(T.notMember);
+  // Muted: the dialog says until when; what the person wrote stays in its field (inputs untouched).
+  if (code === "muted") return { state: { mutedUntil: mutedUntil(e.mutedUntil) }, dialog: muteDialog(e.mutedUntil) };
   if (["no_identity", "unofficial", "device_taken", "too_many_devices"].includes(code)) return { state: { problem: code } };
   return toast(T.offline);
 }
@@ -76,7 +79,7 @@ async function open(state, route) {
       await login();
       me = await call("/me");
     }
-    const base = { me, problem: null };
+    const base = { me, problem: null, mutedUntil: mutedUntil(me.mutedUntil) };
     if (!me.handle) return { state: { ...base, view: "welcome" } };
     await syncActivity().catch(() => 0);
     const notes = await call("/notifications").catch(() => ({ unread: 0 }));
@@ -137,11 +140,9 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "open":
         return open(s, route || { name: "main" });
       case "openProfile":
-        // Your profile is a page of its own over the tabs (back arrow and the system back), never a tab: a TabBar can
-        // only mark one of its own tabs, so a hidden one left «Feed» marked and a tap on it did nothing.
-        return { route: { push: "me", params: {} }, state: { ...(await loadProfile(s.me)) } };
       case "tab": {
-        const tab = value;
+        const tab = name === "openProfile" ? "profile" : value;
+        if (tab === "profile") return { state: { tab, ...(await loadProfile(s.me)) } };
         if (tab === "people") {
           const people = await call("/people");
           return { state: { tab, people: people.items, results: undefined } };
@@ -151,7 +152,7 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       }
       case "refresh": {
         const out = { ...(await loadFeed(s)), selected: s.selected };
-        if (route && route.name === "me") Object.assign(out, await loadProfile(s.me));
+        if (s.tab === "profile") Object.assign(out, await loadProfile(s.me));
         if (s.tab === "people") out.people = (await call("/people")).items;
         if (s.tab === "communities") out.communities = await call("/communities");
         await syncActivity().catch(() => 0);
@@ -160,6 +161,8 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       }
       case "tick": {
         // Nobody's press: a conditional GET of the first page; new posts wait behind «N nuevas» instead of moving the feed.
+        // A mute that ran out unlocks the composer and the comment field without a press.
+        if (s.mutedUntil && !mutedUntil(s.mutedUntil)) return { state: { mutedUntil: 0 } };
         if (s.view !== "main" || !s.feed) return null;
         const page = await call("/feed?limit=20", { etag: s.feedTag }).catch(() => ({ notModified: true }));
         if (page.notModified) return null;
@@ -220,7 +223,9 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         const placed = inCommunity
           ? { cfeed: mergeById([post, ...(s.cfeed || [])]).slice(0, MAX_FEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } }
           : { feed: mergeById([post, ...(s.feed || [])]).slice(0, MAX_FEED), tab: "feed" };
-        return { state: { ...placed, inputs: { postText: "" } }, ui: [{ close: "composer" }], ...toast(T.published) };
+        const warned = moderationDialog(post);
+        return { state: { ...placed, ...moderationState(post), inputs: { postText: "" } }, ui: [{ close: "composer" }],
+          ...(warned ? { dialog: warned } : toast(T.published)) };
       }
       case "like":
       case "unlike": {
@@ -230,16 +235,19 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "openPost": {
         const thread = await loadThread(arg);
         if (device === "tv") return { state: { thread, selected: String(arg) }, focus: "commentText" };
-        // On a phone the post opens as a page: a chat-like list that stays at its newest comment, the box at the bottom.
-        return { route: { push: "post", params: { id: String(arg) } }, state: { thread } };
+        return { state: { thread }, ui: [{ open: "thread" }] };
       }
+      case "threadClosed":
+        return null;
       case "sendComment": {
         const raw = String(inputs.commentText || "").trim();
         if (!raw || !s.thread) return null;
         const text = await clean(raw);
         const c = await callFresh(`/posts/${s.thread.postId}/comments`, { method: "POST", json: { text } });
         const thread = { ...s.thread, items: [...(s.thread.items || []), c].slice(-50) };
-        return { state: { ...patchPost({ ...s, thread }, s.thread.postId, (p) => ({ comments: (p.comments || 0) + 1 })), thread: { ...thread, post: { ...thread.post, comments: (thread.post.comments || 0) + 1 } }, inputs: { commentText: "" } } };
+        const warned = moderationDialog(c);
+        return { state: { ...patchPost({ ...s, thread }, s.thread.postId, (p) => ({ comments: (p.comments || 0) + 1 })), thread: { ...thread, post: { ...thread.post, comments: (thread.post.comments || 0) + 1 } }, ...moderationState(c), inputs: { commentText: "" } },
+          ...(warned ? { dialog: warned } : {}) };
       }
       case "postMenu":
         return { dialog: { title: T.deletePost[0], titleEn: T.deletePost[1], body: T.deleteText[0], bodyEn: T.deleteText[1],
@@ -253,13 +261,11 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         if (s.user) out.user = { ...s.user, posts: (s.user.posts || []).filter(keep) };
         const wasOpen = s.thread && sameId(s.thread.postId, arg);
         if (wasOpen) out.thread = null;
-        // Deleted from its own page: back to where it was opened from.
-        const onItsPage = wasOpen && route && route.name === "post";
-        return { state: { ...out, ...(onItsPage ? { view: "main" } : {}) }, ...(onItsPage ? { route: { pop: true } } : {}), ...toast(T.deleted) };
+        return { state: out, ...(wasOpen ? { ui: [{ close: "thread" }] } : {}), ...toast(T.deleted) };
       }
       case "openUser":
-        if (s.me && sameId(arg, s.me.id)) return { route: { push: "me", params: {} }, state: { ...(await loadProfile(s.me)) } };
-        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) } };
+        if (s.me && sameId(arg, s.me.id)) return { state: { tab: "profile", ...(await loadProfile(s.me)) }, ui: [{ close: "thread" }] };
+        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) }, ui: [{ close: "thread" }] };
       case "back": {
         // Back from a post, a person or a community lands on the main tabs (loading the feed when a notice opened us deep).
         const out = { view: "main" };

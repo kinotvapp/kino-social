@@ -94,6 +94,16 @@ export const T = {
   you: ["Tú", "You"],
   back: ["Atrás", "Back"],
   aiNote: ["Revisamos que el texto no tenga groserías", "We check the text has no swear words"],
+  // Moderation: a masked post or comment is a warning (strike); the third in 12 h mutes for 12 h.
+  strikeWarning: (n, limit) => [
+    `Tu texto tenía palabras ofensivas y se ocultaron. Llevas ${n} de ${limit} avisos: al tercero no podrás publicar ni comentar durante 12 horas.`,
+    `Your text had offensive words and they were hidden. You have ${n} of ${limit} warnings: on the third you won't be able to post or comment for 12 hours.`,
+  ],
+  mutedStarted: ["Usaste palabras ofensivas tres veces.", "You used offensive words three times."],
+  // A prefix: Kino writes the time after it (Text time, timeFormat clock).
+  mutedUntilDialog: ["No podrás publicar ni comentar hasta las ", "You won't be able to post or comment until "],
+  mutedUntilLine: ["No puedes publicar ni comentar hasta las ", "You can't post or comment until "],
+  ok: ["Entendido", "OK"],
 };
 
 /** "vio *Título*" for a movie, "vio T4 · E3 de *Serie*" for an episode. */

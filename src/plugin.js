@@ -3,7 +3,7 @@
 
 import { postNotices } from "./notices.js";
 import { communityView } from "./ui/communities.js";
-import { mainView, meView, postView, problemView, userView, welcomeView } from "./ui/views.js";
+import { mainView, postView, problemView, userView, welcomeView } from "./ui/views.js";
 
 export { screenEvent } from "./events.js";
 export { track } from "./track.js";
@@ -16,12 +16,9 @@ export async function screen({ state, route, device, size, lang }) {
   if (!s.me) return { type: "Column", padding: 48, crossAxisAlignment: "center", children: [{ type: "CircularProgressIndicator" }] };
   if (s.view === "welcome" || !s.me.handle) return welcomeView(s, ctx);
   const name = route && route.name;
-  // The route on top wins (a post opened from a profile, a profile from a post); `view` only covers a notice's deep link.
-  const page = ["me", "post", "user", "community"].includes(name) ? name : s.view;
-  if (page === "me") return meView(s, ctx);
-  if (page === "post") return postView(s, ctx);
-  if (page === "user") return userView(s, ctx);
-  if (page === "community") return communityView(s, ctx);
+  if (name === "post" || s.view === "post") return postView(s, ctx);
+  if (name === "user" || s.view === "user") return userView(s, ctx);
+  if (name === "community" || s.view === "community") return communityView(s, ctx);
   return mainView(s, ctx);
 }
 

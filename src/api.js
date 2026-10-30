@@ -76,6 +76,12 @@ export async function call(path, { method = "GET", json, etag } = {}) {
   let body = {};
   try { body = r.json() || {}; } catch (_) { /* an empty body */ }
   if (r.status === 429) throw new ApiError("rate_limited", 429);
+  if (r.status === 403) {
+    // muted (moderation: until mutedUntil), not_member, not_yours…
+    const e = new ApiError(body.error || "forbidden", 403);
+    if (Number.isInteger(body.mutedUntil)) e.mutedUntil = body.mutedUntil;
+    throw e;
+  }
   if (r.status === 409) throw new ApiError(body.error || "conflict", 409);
   if (r.status === 400) throw new ApiError(body.error || "bad_request", 400);
   if (!r.ok) throw new ApiError("offline", r.status);
