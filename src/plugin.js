@@ -1,6 +1,7 @@
 // Kino Social (experiment): a feed to share what you watch, with likes, comments, profiles and people to follow.
 // The source of the shipped plugin.js (`npm run build`).
 
+import { balanceNotice, coinsReady } from "./coins.js";
 import { postNotices } from "./notices.js";
 import { communityView } from "./ui/communities.js";
 import { mainView, meView, postView, problemView, userView, welcomeView } from "./ui/views.js";
@@ -12,7 +13,8 @@ export { panel, panelAction } from "./panel.js";
 /** A pure view of the state Kino keeps; the reserved `open` event loads it. */
 export async function screen({ state, route, device, size, lang }) {
   const s = state || {};
-  const ctx = { device, size, lang };
+  // coins: this Kino can give coins (apiVersion 16); coinTotals: the post totals this device learned from its gifts.
+  const ctx = { device, size, lang, coins: coinsReady(), coinTotals: s.coinTotals || {} };
   if (s.problem) return { type: "Column", padding: 24, children: [problemView(s.problem)] };
   if (!s.me) return { type: "Column", padding: 48, crossAxisAlignment: "center", children: [{ type: "CircularProgressIndicator" }] };
   if (s.view === "welcome" || !s.me.handle) return welcomeView(s, ctx);
@@ -26,7 +28,14 @@ export async function screen({ state, route, device, size, lang }) {
   return mainView(s, ctx);
 }
 
-/** The scheduled job: new comments, likes and followers become notices in Kino's bell. */
-export async function job() {
+/**
+ * The scheduled jobs: "notices" turns new comments, likes and followers into notices in Kino's bell; "coins" posts the daily
+ * balance notice (from 20:00, once a day; its switch is the "dailyBalance" setting).
+ */
+export async function job(ctx) {
+  if (ctx && ctx.id === "coins") {
+    await balanceNotice();
+    return;
+  }
   await postNotices();
 }

@@ -158,6 +158,21 @@ export const T = {
   badHandle: ["Ese @usuario no se puede usar", "That @username can't be used"],
   /** "Nombre — T4.E3" / "Nombre — S4.E3": the compose box's plain-text season/episode fragment, es then en. */
   episodeFragment: (name, s, e) => [`${name} — T${s}.E${e}`, `${name} — S${s}.E${e}`],
+  // Kinos (Kino coins): one per tap for someone's post; earned by watching (1 every 10 minutes, at most 20 a day).
+  giveCoin: ["Regalar un kino", "Give a Kino"],
+  coinShort: ["Kinos", "Kinos"],
+  coinGiven: ["Le regalaste un kino", "You gave a Kino"],
+  coinNoBalance: ["Aún no tienes kinos: ganas uno cada 10 minutos que ves", "You have no Kinos yet: you earn one every 10 minutes you watch"],
+  coinSelf: ["No puedes regalarte kinos", "You can't give Kinos to yourself"],
+  coinUnavailable: ["Los kinos no están disponibles ahora", "Kinos aren't available right now"],
+  coinBalance: (n) => [n === 1 ? "1 kino" : `${n} kinos`, n === 1 ? "1 Kino" : `${n} Kinos`],
+  coinTitle: ["Tus kinos", "Your Kinos"],
+  coinToday: (earned, cap) => [`Hoy ganaste ${earned} de ${cap}`, `Today you earned ${earned} of ${cap}`],
+  coinHint: ["Ganas uno cada 10 minutos que ves; regálalos desde una publicación", "You earn one every 10 minutes you watch; give them from a post"],
+  // The daily balance notice (the job, around 20:00) and its switch in the plugin's settings.
+  coinNoticeTitle: (n) => [n === 1 ? "Tienes 1 kino" : `Tienes ${n} kinos`, n === 1 ? "You have 1 Kino" : `You have ${n} Kinos`],
+  coinNoticeEarned: (n) => [n === 1 ? "Hoy ganaste 1 viendo" : `Hoy ganaste ${n} viendo`, n === 1 ? "You earned 1 today by watching" : `You earned ${n} today by watching`],
+  coinNoticeSpend: ["Regálalos a las publicaciones que te gusten", "Give them to the posts you like"],
 };
 
 /** "vio *Título*" for a movie, "vio T4 · E3 de *Serie*" for an episode. */
