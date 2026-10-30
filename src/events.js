@@ -8,6 +8,7 @@ import { clean } from "./swear.js";
 import { moderationDialog, moderationState, muteDialog, mutedUntil } from "./moderation.js";
 import { linkPreview } from "./linkpreview.js";
 import { titleHint } from "./titlelink.js";
+import { canPublish, cleanQuery, pickAttachment, postBody, recentTitles, searchTitles } from "./attach.js";
 
 const MAX_FEED = 80;
 const toast = ([es, en]) => ({ toast: es, toastEn: en });
@@ -25,6 +26,9 @@ function failure(e) {
   if (["no_identity", "unofficial", "device_taken", "too_many_devices"].includes(code)) return { state: { problem: code } };
   return toast(T.offline);
 }
+
+/** The composer's picker, folded away (its lists dropped: they only live while it is open). */
+const closedPicker = () => ({ picking: false, pickQuery: "", pickResults: null, pickRecent: null, pickError: null });
 
 const sameId = (a, b) => String(a) === String(b);
 const mergeById = (items) => {
@@ -225,24 +229,47 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
             ...(s.communities ? { communities: { ...s.communities, mine: [...s.communities.mine, c] } } : {}) },
           ui: [{ close: "createCommunity" }], ...toast(T.communityCreated) };
       }
+      case "openAttach":
+        return { state: { picking: true, pickQuery: "", pickResults: null, pickError: null, pickRecent: await recentTitles(),
+          inputs: { titleSearch: "" } }, focus: "titleSearch" };
+      case "searchTitles": {
+        const q = cleanQuery(value !== undefined ? value : inputs.titleSearch);
+        if (!q) return { state: { pickQuery: "", pickResults: null, pickError: null } };
+        if (typeof kino.tmdb !== "function") return { state: { pickQuery: q, pickError: "noTmdb" } };
+        try {
+          return { state: { pickQuery: q, pickResults: await searchTitles(q), pickError: null } };
+        } catch (_) {
+          return { state: { pickQuery: q, pickResults: null, pickError: "failed" } };
+        }
+      }
+      case "attachTitle": {
+        const attach = pickAttachment(arg, s.pickResults, s.pickRecent);
+        if (!attach) return null;
+        return { state: { attach, ...closedPicker() }, focus: "postText" };
+      }
+      case "cancelAttach":
+        return { state: closedPicker(), focus: "openAttach" };
+      case "clearAttach":
+        return { state: { attach: null }, focus: "openAttach" };
       case "publish": {
-        const raw = String((s.inputs && s.inputs.postText) || "").trim();
-        if (!raw) return null;
-        const text = await clean(raw);
+        const values = (arguments[0] && arguments[0].values) || inputs;
+        const raw = String(values.postText ?? inputs.postText ?? "").trim();
+        const attach = s.attach || null;
+        if (!canPublish(raw, attach)) return toast(T.needTextOrTitle);
+        const text = raw ? await clean(raw) : "";
         // The device reads the link (the server never fetches): a TMDB or IMDb title from Kino's TMDB, else the page's head.
-        const title = await titleHint(text);
-        const link = title ? null : await linkPreview(text);
+        const linkTitle = text ? await titleHint(text) : null;
+        const link = linkTitle || !text ? null : await linkPreview(text);
         // Written inside a community's page, it goes to that community and its feed; else to the general one.
         const inCommunity = s.community && ((route && route.name === "community") || s.view === "community");
-        const json = { text, ...(title ? { title } : {}), ...(link && link.title ? { link } : {}),
-          ...(inCommunity ? { communityId: Number(s.community.id) } : {}) };
+        const json = postBody({ text, linkTitle, link, attach, communityId: inCommunity ? s.community.id : null });
         const post = await callFresh("/posts", { method: "POST", json });
         const placed = inCommunity
           ? { cfeed: mergeById([post, ...(s.cfeed || [])]).slice(0, MAX_FEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } }
           : { feed: mergeById([post, ...(s.feed || [])]).slice(0, MAX_FEED), tab: "feed" };
         const warned = moderationDialog(post);
-        return { state: { ...placed, ...moderationState(post), inputs: { postText: "" } }, ui: [{ close: "composer" }],
-          ...(warned ? { dialog: warned } : toast(T.published)) };
+        return { state: { ...placed, ...moderationState(post), attach: null, ...closedPicker(), inputs: { postText: "", titleSearch: "" } },
+          ui: [{ close: "composer" }], ...(warned ? { dialog: warned } : toast(T.published)) };
       }
       case "like":
       case "unlike": {

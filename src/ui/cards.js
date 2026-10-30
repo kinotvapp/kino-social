@@ -25,19 +25,22 @@ function linkCard(post, ctx, pfx) {
   const host = (link.url.match(/^https?:\/\/([^/?#]+)/i) || [])[1] || link.url;
   const https = /^https:\/\//i.test(link.url);
   if (link.tmdb && link.title) {
-    // A TMDB or IMDb title Kino knows: its poster, and a tap opens it in Kino (on the TV too).
-    return { type: "Card", key: pfx + "link-" + post.id, variant: "outlined", padding: 12,
-      onTap: { go: { titleByIds: { tmdb: link.tmdb.id, kind: link.tmdb.kind, title: link.title.slice(0, 120) } } },
+    // A TMDB or IMDb title Kino knows (a pasted link, or a title attached in the composer): its poster, and «Ver en Kino»
+    // opens it in Kino (on the TV too). The whole card does the same on the phone.
+    const open = { go: { titleByIds: { tmdb: link.tmdb.id, kind: link.tmdb.kind, title: link.title.slice(0, 120) } } };
+    const year = /^\d{4}$/.test(String(link.desc || "")) ? Number(link.desc) : undefined;
+    return { type: "Card", key: pfx + "link-" + post.id, variant: "outlined", padding: 12, onTap: open,
       children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
         { type: "Image", width: { compact: 64, expanded: 80 }, aspect: "2:3", borderRadius: "small", alt: link.title, altEn: link.title,
           ...(link.image ? { url: link.image } : {}),
           fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: link.tmdb.kind === "movie" ? "movie" : "tv", margin: 12 }] } },
         { type: "Column", flex: 1, gap: 4, children: [
           Raw(link.title, { style: "h5", bold: true, maxLines: 2 }),
-          ...(link.desc ? [Raw(link.desc, { style: "caption", color: "muted" })] : []),
-          Txt(["Ver en Kino", "Watch in Kino"], { style: "label", color: "primary" }),
+          year || !link.desc ? Txt(T.titleLine({ kind: link.tmdb.kind, year }), { style: "caption", color: "muted" })
+            : Raw(link.desc, { style: "caption", color: "muted" }),
+          { type: "Row", children: [{ type: "Button", variant: "secondary", key: pfx + "open-" + post.id, icon: "play",
+            labelText: T.openInKino[0], labelTextEn: T.openInKino[1], onPressed: open }] },
         ] },
-        { type: "Icon", name: "play", color: "primary" },
       ] }] };
   }
   const tap = https && !isTv(ctx) ? { go: { url: { href: link.url, title: (link.title || host).slice(0, 60) } } } : undefined;
@@ -84,7 +87,8 @@ export function postCard(post, ctx, me, { selected = false, full = false } = {})
     ...(tv && !full ? { onTap: { event: "openPost", arg: String(post.id) }, selected } : {}),
     children: [
       authorRow(post, ctx, me, pfx),
-      Raw(post.text, { maxLines: full ? undefined : tv ? 4 : 12 }),
+      // The text as written, line breaks included (a post with an attached title may have none).
+      ...(post.text ? [Raw(post.text, { maxLines: full ? undefined : tv ? 4 : 12 })] : []),
       ...(post.link ? [linkCard(post, ctx, pfx)] : []),
       ...(!tv || full ? [actionsRow(post, ctx, pfx, full)] : [{ type: "Row", gap: 16, children: [
         { type: "Row", gap: 4, crossAxisAlignment: "center", children: [{ type: "Icon", name: "heart", color: post.liked ? "error" : "muted" }, Raw(count(post.likes || 0), { style: "caption", color: "muted" })] },

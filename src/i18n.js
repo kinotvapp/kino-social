@@ -107,6 +107,24 @@ export const T = {
   you: ["Tú", "You"],
   back: ["Atrás", "Back"],
   aiNote: ["Revisamos que el texto no tenga groserías", "We check the text has no swear words"],
+  // Attaching a movie or series to a new post
+  attach: ["Adjuntar película o serie", "Attach a movie or series"],
+  searchTitles: ["Busca una película o serie", "Search for a movie or series"],
+  searchTitlesHint: ["Escribe al menos 2 letras", "Type at least 2 letters"],
+  watching: ["Lo que estás viendo", "What you're watching"],
+  noTitles: ["No encontramos películas ni series con ese nombre", "No movies or series by that name"],
+  searchFailed: ["No pudimos buscar ahora: inténtalo de nuevo", "We couldn't search right now: try again"],
+  noTmdb: ["La búsqueda de títulos no está disponible en esta versión de Kino", "Title search isn't available in this Kino version"],
+  movie: ["Película", "Movie"],
+  series: ["Serie", "Series"],
+  /** "2024 · Película" / "2024 · Movie", or the kind alone without a year. */
+  titleLine: (t) => {
+    const [es, en] = t.kind === "movie" ? ["Película", "Movie"] : ["Serie", "Series"];
+    return t.year ? [`${t.year} · ${es}`, `${t.year} · ${en}`] : [es, en];
+  },
+  removeAttach: ["Quitar película o serie", "Remove movie or series"],
+  openInKino: ["Ver en Kino", "Open in Kino"],
+  needTextOrTitle: ["Escribe algo o adjunta una película o serie", "Write something or attach a movie or series"],
   // Moderation: a masked post or comment is a warning (strike); the third in 12 h mutes for 12 h.
   strikeWarning: (n, limit) => [
     `Tu texto tenía palabras ofensivas y se ocultaron. Llevas ${n} de ${limit} avisos: al tercero no podrás publicar ni comentar durante 12 horas.`,

@@ -6,6 +6,7 @@ import { T } from "../i18n.js";
 import { muteLine, mutedUntil } from "../moderation.js";
 import { activityCard, commentRow, feedItem, postCard } from "./cards.js";
 import { communitiesTab } from "./communities.js";
+import { MAX_QUERY, attachKey } from "../attach.js";
 import { Avatar, Button, IconBtn, NameBlock, Raw, TextBtn, Txt, isTv, pagePadding } from "./kit.js";
 
 const MAX_TEXT = 500;
@@ -26,14 +27,65 @@ function composerPrompt(s) {
   };
 }
 
+/** A title as a small card: its poster, title and «2024 · Película»; [trailing] goes at its end. */
+export function titleRow(t, props = {}, trailing = []) {
+  return {
+    type: "Card", variant: "outlined", padding: 8, ...props,
+    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      { type: "Image", width: 40, aspect: "2:3", borderRadius: "small", alt: t.title, altEn: t.title, ...(t.poster ? { url: t.poster } : {}),
+        fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: t.kind === "movie" ? "movie" : "tv", margin: 8 }] } },
+      { type: "Column", flex: 1, gap: 4, children: [
+        Raw(t.title, { style: "h5", bold: true, maxLines: 2 }),
+        Txt(T.titleLine(t), { style: "caption", color: "muted", maxLines: 1 }),
+      ] },
+      ...trailing,
+    ] }],
+  };
+}
+
+/** The picker inside the composer: a search field, then what the person watched lately or what the search found. */
+function titlePicker(s) {
+  const q = s.pickQuery || "";
+  const pick = (t) => titleRow(t, { key: "pick-" + t.kind + "-" + t.tmdbId, onTap: { event: "attachTitle", arg: attachKey(t) } });
+  const list = [];
+  if (!q) {
+    const recent = s.pickRecent || [];
+    if (recent.length) list.push(Txt(T.watching, { style: "label", color: "muted" }), ...recent.map(pick));
+    else list.push(Txt(T.searchTitlesHint, { style: "caption", color: "muted" }));
+  } else if (s.pickError) list.push(Txt(s.pickError === "noTmdb" ? T.noTmdb : T.searchFailed, { style: "caption", color: "error" }));
+  else if (s.pickResults == null) list.push({ type: "CircularProgressIndicator" });
+  else if (!s.pickResults.length) list.push(Txt(T.noTitles, { style: "caption", color: "muted" }));
+  else list.push(...s.pickResults.map(pick));
+  return {
+    type: "Card", key: "picker", background: "surfaceVariant", padding: 12, gap: 8,
+    children: [
+      { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+        Txt(T.attach, { style: "h5", bold: true, flex: 1 }),
+        IconBtn("close", T.cancel, "cancelAttach", { key: "cancelAttach" }),
+      ] },
+      { type: "TextField", key: "titleSearch", kind: "search", maxLength: MAX_QUERY, labelText: T.searchTitles[0], labelTextEn: T.searchTitles[1],
+        onChanged: "searchTitles", autofocus: true },
+      ...list,
+    ],
+  };
+}
+
 function composerSheet(s) {
   const until = muted(s);
   const lock = until ? { enabled: false } : {};
+  const attach = s.attach || null;
+  const attachment = attach
+    ? titleRow(attach, { key: "attached" }, [IconBtn("close", T.removeAttach, "clearAttach", { key: "clearAttach", ...lock })])
+    : s.picking ? titlePicker(s)
+      : { type: "Button", variant: "secondary", key: "openAttach", icon: "movie", labelText: T.attach[0], labelTextEn: T.attach[1],
+        onPressed: { event: "openAttach", timeoutMs: 20000 }, ...lock };
   return {
     type: "BottomSheet", key: "composer", title: T.compose[0], titleEn: T.compose[1],
     children: [{ type: "Form", key: "composeForm", gap: 12, onSubmit: { event: "publish", timeoutMs: 28000 }, children: [
-      { type: "TextField", key: "postText", multiline: true, maxLines: 6, maxLength: MAX_TEXT, required: true,
+      // Several lines (Enter is a new line); Kino draws a multi-line field 3 lines high, growing to 8.
+      { type: "TextField", key: "postText", multiline: true, maxLines: 8, maxLength: MAX_TEXT, required: !attach,
         labelText: T.prompt[0], labelTextEn: T.prompt[1], hintText: T.postHint[0], hintTextEn: T.postHint[1], ...lock },
+      attachment,
       until ? muteLine(until) : Txt(T.aiNote, { style: "caption", color: "muted" }),
       { type: "ElevatedButton", key: "publish", icon: "send", labelText: T.publish[0], labelTextEn: T.publish[1], submit: true, fill: true, ...lock },
     ] }],
@@ -102,9 +154,13 @@ function threadBody(s, ctx, { pane = false } = {}) {
     postCard(th.post, { ...ctx, device: "phone" }, s.me, { full: true }),
     Txt(T.comments, { style: "h5", bold: true, margin: { top: 4 } }),
     ...(comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { color: "muted" })]),
-    { type: "TextField", key: "commentText", maxLength: 300, labelText: T.commentHint[0], labelTextEn: T.commentHint[1],
-      onSubmitted: "sendComment", trailingIcon: "send", trailingLabel: T.send[0], trailingLabelEn: T.send[1], onTrailingTap: "sendComment",
-      ...(until ? { enabled: false } : {}) },
+    // Several lines (Enter is a new line), so sending is its own button; on the TV, saving Kino's text dialog sends it too.
+    { type: "TextField", key: "commentText", multiline: true, maxLines: 6, maxLength: 300, labelText: T.commentHint[0], labelTextEn: T.commentHint[1],
+      onSubmitted: "sendComment", ...(until ? { enabled: false } : {}) },
+    { type: "Row", key: "commentActions", mainAxisAlignment: "end", children: [
+      { type: "Button", variant: "secondary", key: "sendComment", icon: "send", labelText: T.send[0], labelTextEn: T.send[1],
+        onPressed: { event: "sendComment", timeoutMs: 20000 }, ...(until ? { enabled: false } : {}) },
+    ] },
     ...(until ? [muteLine(until)] : []),
   ];
 }
