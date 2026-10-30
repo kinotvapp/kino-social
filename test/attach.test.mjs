@@ -124,3 +124,9 @@ test("the post body: the attachment the person picked wins over any link; withou
   assert.deepEqual(postBody({ text: "x", link: { url: "https://a.example" } }), { text: "x" });
   assert.deepEqual(postBody({ text: "x", attach: { kind: "movie" } }), { text: "x" });
 });
+
+test("postBody carries season/episode for a series attachment", () => {
+  assert.deepEqual(postBody({ text: "", attach: ST, season: 4, episode: 3 }),
+    { text: "", title: { ...ST, season: 4, episode: 3 } });
+  assert.deepEqual(postBody({ text: "", attach: DUNE, season: 4, episode: 3 }), { text: "", title: DUNE }); // movie: dropped
+});

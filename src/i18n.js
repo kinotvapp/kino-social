@@ -153,3 +153,18 @@ export function watchedLine(item) {
   }
   return item.kind === "series" ? ["está viendo la serie", "is watching the series"] : ["vio la película", "watched the movie"];
 }
+
+/**
+ * "A *Nombre* le gustó *Título*" for a text-less, title-attached post — the card's stand-in for a post with no text.
+ * Reuses watchedLine's season/episode fragment (`T# · E#` / `S# · E#`), swapping the verb and adding the person and title.
+ */
+export function likedLine(post) {
+  const name = (post.user && post.user.name) || "";
+  const link = post.link || {};
+  const kind = link.tmdb && link.tmdb.kind;
+  const title = link.title || "";
+  if (kind === "series" && Number.isInteger(link.season) && Number.isInteger(link.episode)) {
+    return [`A ${name} le gustó T${link.season} · E${link.episode} de ${title}`, `${name} liked S${link.season} · E${link.episode} of ${title}`];
+  }
+  return [`A ${name} le gustó ${title}`, `${name} liked ${title}`];
+}

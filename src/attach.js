@@ -84,11 +84,15 @@ export const canPublish = (text, attach) => String(text || "").trim().length > 0
 /**
  * The POST /posts body. The attachment the person picked wins over any link in the text (owner, 2026-10-30): the link
  * then stays plain text and no preview goes. Without one, a TMDB or IMDb link's title ([linkTitle]) or another link's
- * preview ([link]) goes as before.
+ * preview ([link]) goes as before. [season]/[episode] are added to the title only when it is a series and both are
+ * plain positive integers; a movie never gets them.
  */
-export function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null }) {
+export function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null, season = null, episode = null }) {
   const picked = validAttachment(attach) ? attach : null;
-  const title = picked || linkTitle;
+  let title = picked || linkTitle;
+  if (title && title.kind === "series" && Number.isInteger(season) && season > 0 && Number.isInteger(episode) && episode > 0) {
+    title = { ...title, season, episode };
+  }
   return {
     text,
     ...(title ? { title } : {}),

@@ -1,7 +1,7 @@
 // One feed item as a card: a post (author, text, link preview, likes and comments), what someone watched (with the
 // poster), or the people worth following while the person follows few.
 
-import { T, watchedLine } from "../i18n.js";
+import { T, likedLine, watchedLine } from "../i18n.js";
 import { Avatar, Button, IconBtn, NameBlock, Raw, TextBtn, Txt, count, isTv } from "./kit.js";
 
 function authorRow(post, ctx, me, pfx) {
@@ -88,7 +88,8 @@ export function postCard(post, ctx, me, { selected = false, full = false } = {})
     children: [
       authorRow(post, ctx, me, pfx),
       // The text as written, line breaks included (a post with an attached title may have none).
-      ...(post.text ? [Raw(post.text, { maxLines: full ? undefined : tv ? 4 : 12 })] : []),
+      ...(post.text ? [Raw(post.text, { maxLines: full ? undefined : tv ? 4 : 12 })]
+        : post.link && post.link.tmdb ? [Txt(likedLine(post), { maxLines: full ? undefined : 2 })] : []),
       ...(post.link ? [linkCard(post, ctx, pfx)] : []),
       ...(!tv || full ? [actionsRow(post, ctx, pfx, full)] : [{ type: "Row", gap: 16, children: [
         { type: "Row", gap: 4, crossAxisAlignment: "center", children: [{ type: "Icon", name: "heart", color: post.liked ? "error" : "muted" }, Raw(count(post.likes || 0), { style: "caption", color: "muted" })] },
