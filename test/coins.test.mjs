@@ -134,3 +134,39 @@ test("your profile shows the balance and today's progress, and nothing when unav
   delete globalThis.kino.coins;
   assert.equal(find(await screen({ state, route: { name: "me" }, device: "phone" }), "coinsCard").length, 0);
 });
+
+test("switched off in Kino's Ajustes: no button, no balance, no notice, no toast", async () => {
+  kino.coins.balance = async () => { throw kinoError("disabled"); };
+  kino.coins.give = async () => { throw kinoError("disabled"); };
+  const loaded = await screenEvent({ name: "loadCoins", state: { me: ME } });
+  assert.equal(loaded.state.coins, null);
+  const feed = { me: ME, view: "main", tab: "feed", feed: [post()] };
+  assert.equal(find(await screen({ state: feed, route: { name: "main" }, device: "phone" }), "coin-7").length, 0);
+  const mine = { me: ME, view: "main", profile: { user: ME, posts: [] }, myActivity: [], coins: { balance: 5, earnedToday: 3, capToday: 20 } };
+  assert.equal(find(await screen({ state: mine, route: { name: "me" }, device: "phone" }), "coinsCard").length, 0);
+  assert.equal(await balanceNotice(at(20)), false);
+  assert.deepEqual(posted, []);
+  const out = await screenEvent({ name: "coin", arg: "7", state: { me: ME, feed: [post()] } });
+  assert.equal(out?.toast, undefined);
+  assert.equal(out?.toastEn, undefined);
+});
+
+test("a gift refused as disabled hides the coins at once, without a word", async () => {
+  kino.coins.give = async () => { throw kinoError("disabled"); };
+  const out = await screenEvent({ name: "coin", arg: "7", state: { me: ME, feed: [post()], coins: { balance: 5, earnedToday: 3, capToday: 20 } } });
+  assert.equal(out.toast, undefined);
+  assert.equal(out.state.coins, null);
+  const feed = { me: ME, view: "main", tab: "feed", feed: [post()] };
+  assert.equal(find(await screen({ state: feed, route: { name: "main" }, device: "phone" }), "coin-7").length, 0);
+});
+
+test("switched back on: the next balance brings the coins back", async () => {
+  kino.coins.balance = async () => { throw kinoError("disabled"); };
+  await screenEvent({ name: "loadCoins", state: { me: ME } });
+  kino.coins.balance = async () => ({ balance: 5, earnedToday: 3, capToday: 20 });
+  const loaded = await screenEvent({ name: "loadCoins", state: { me: ME } });
+  assert.deepEqual(loaded.state.coins, { balance: 5, earnedToday: 3, capToday: 20 });
+  const feed = { me: ME, view: "main", tab: "feed", feed: [post()] };
+  assert.equal(find(await screen({ state: feed, route: { name: "main" }, device: "phone" }), "coin-7").length, 1);
+  assert.equal(await balanceNotice(at(20)), true);
+});

@@ -168,13 +168,37 @@ var TOTALS_KEY = "coinTotals";
 var MAX_TOTALS = 200;
 var NOTICE_DAY_KEY = "coinNoticeDay";
 var NOTICE_HOUR = 20;
-var coinsReady = () => typeof kino !== "undefined" && typeof kino.coins === "object" && kino.coins !== null;
+var COINS_OFF_KEY = "coinsOff";
+var COINS_DISABLED = "disabled";
+var coinsPresent = () => typeof kino !== "undefined" && typeof kino.coins === "object" && kino.coins !== null;
+var knownOff = () => {
+  try {
+    return kino.storage.get(COINS_OFF_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+};
+function rememberOff(off) {
+  try {
+    if (off) kino.storage.set(COINS_OFF_KEY, "1");
+    else if (knownOff()) kino.storage.remove(COINS_OFF_KEY);
+  } catch (_) {
+  }
+}
+function coinsSwitchedOff(e) {
+  const off = !!e && e.code === COINS_DISABLED;
+  if (off) rememberOff(true);
+  return off;
+}
+var coinsReady = () => coinsPresent() && !knownOff();
 async function loadCoins() {
-  if (!coinsReady()) return null;
+  if (!coinsPresent()) return null;
   try {
     const b = await kino.coins.balance();
+    rememberOff(false);
     return { balance: Number(b.balance) || 0, earnedToday: Number(b.earnedToday) || 0, capToday: Number(b.capToday) || 0 };
-  } catch (_) {
+  } catch (e) {
+    coinsSwitchedOff(e);
     return null;
   }
 }
@@ -211,7 +235,7 @@ var localDay = (ms) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 async function balanceNotice(now = Date.now()) {
-  if (!coinsReady() || typeof kino.notifications !== "object") return false;
+  if (!coinsPresent() || typeof kino.notifications !== "object") return false;
   if (kino.config && kino.config.get("dailyBalance") === false) return false;
   if (new Date(now).getHours() < NOTICE_HOUR) return false;
   const day = localDay(now);
@@ -2462,7 +2486,8 @@ async function open(state, route) {
       await login();
       me = await call("/me");
     }
-    const base = { me, problem: null, mutedUntil: mutedUntil(me.mutedUntil), ...coinsReady() ? { coinTotals: knownTotals() } : {} };
+    const coins = await loadCoins();
+    const base = { me, problem: null, mutedUntil: mutedUntil(me.mutedUntil), ...coinsReady() ? { coins, coinTotals: knownTotals() } : {} };
     if (!me.handle) return { state: { ...base, view: "welcome" } };
     await syncActivity().catch(() => 0);
     const notes = await call("/notifications").catch(() => ({ unread: 0 }));
@@ -2519,6 +2544,7 @@ async function giveCoin(state, postId) {
     if (Number.isFinite(Number(r.postTotal))) out.coinTotals = rememberTotal(String(postId), Number(r.postTotal));
     return { state: out, ...toast(T.coinGiven) };
   } catch (e) {
+    if (coinsSwitchedOff(e)) return { state: { coins: null } };
     return toast(coinRefusal(e));
   }
 }

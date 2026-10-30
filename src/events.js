@@ -10,7 +10,7 @@ import { linkPreview } from "./linkpreview.js";
 import { titleHint } from "./titlelink.js";
 import { tidyLines } from "./lines.js";
 import { canPublish, cleanQuery, pickAttachment, postBody, recentTitles, searchTitles } from "./attach.js";
-import { coinRefusal, coinsReady, knownTotals, loadCoins, rememberTotal } from "./coins.js";
+import { coinRefusal, coinsReady, coinsSwitchedOff, knownTotals, loadCoins, rememberTotal } from "./coins.js";
 
 const MAX_FEED = 80;
 const toast = ([es, en]) => ({ toast: es, toastEn: en });
@@ -91,7 +91,9 @@ async function open(state, route) {
       await login();
       me = await call("/me");
     }
-    const base = { me, problem: null, mutedUntil: mutedUntil(me.mutedUntil), ...(coinsReady() ? { coinTotals: knownTotals() } : {}) };
+    // Asked once per open: it learns whether the person switched Kinos off (or back on) in Kino's Ajustes.
+    const coins = await loadCoins();
+    const base = { me, problem: null, mutedUntil: mutedUntil(me.mutedUntil), ...(coinsReady() ? { coins, coinTotals: knownTotals() } : {}) };
     if (!me.handle) return { state: { ...base, view: "welcome" } };
     await syncActivity().catch(() => 0);
     const notes = await call("/notifications").catch(() => ({ unread: 0 }));
@@ -157,6 +159,8 @@ async function giveCoin(state, postId) {
     if (Number.isFinite(Number(r.postTotal))) out.coinTotals = rememberTotal(String(postId), Number(r.postTotal));
     return { state: out, ...toast(T.coinGiven) };
   } catch (e) {
+    // Switched off in Kino's Ajustes: no word about it, the coins just leave the screen.
+    if (coinsSwitchedOff(e)) return { state: { coins: null } };
     return toast(coinRefusal(e));
   }
 }
