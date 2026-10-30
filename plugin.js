@@ -359,7 +359,12 @@ var T = {
   likeButton: ["Me gusta", "Like"],
   feedOption: ["Feed general", "General feed"],
   /** "¡Listo! Ya eres @ana" — the toast after picking a @handle. */
-  pickedHandle: (handle) => [`¡Listo! Ya eres @${handle}`, `Done! You're @${handle}`]
+  pickedHandle: (handle) => [`¡Listo! Ya eres @${handle}`, `Done! You're @${handle}`],
+  // Handle-picker errors (shared between events.js's own flow and the panel tab's pickHandle).
+  handleTaken: ["Ese @usuario ya existe: prueba otro", "That @username is taken: try another"],
+  badHandle: ["Ese @usuario no se puede usar", "That @username can't be used"],
+  /** "Nombre — T4.E3" / "Nombre — S4.E3": the compose box's plain-text season/episode fragment, es then en. */
+  episodeFragment: (name, s, e) => [`${name} — T${s}.E${e}`, `${name} — S${s}.E${e}`]
 };
 function watchedLine(item) {
   if (item.kind === "series" && Number.isInteger(item.season) && Number.isInteger(item.episode)) {
@@ -2304,8 +2309,8 @@ var toast = ([es, en]) => ({ toast: es, toastEn: en });
 function failure(e) {
   const code = e instanceof ApiError ? e.code : "offline";
   if (code === "rate_limited") return toast(T.tooFast);
-  if (code === "handle_taken") return toast(["Ese @usuario ya existe: prueba otro", "That @username is taken: try another"]);
-  if (code === "bad_handle") return toast(["Ese @usuario no se puede usar", "That @username can't be used"]);
+  if (code === "handle_taken") return toast(T.handleTaken);
+  if (code === "bad_handle") return toast(T.badHandle);
   if (code === "slug_taken") return toast(T.slugTaken);
   if (["bad_name", "bad_slug", "bad_description"].includes(code)) return toast(T.badCommunity);
   if (code === "not_member") return toast(T.notMember);
@@ -2706,17 +2711,26 @@ var toast2 = ([es, en]) => ({ toast: es, toastEn: en });
 var CLASSIC_PANEL = { title: "Kino Social", elements: [{ type: "status", text: T.updateKino[0], textEn: T.updateKino[1] }] };
 var screenResult = (root) => ({ format: "screen", title: "Kino Social", root });
 var noIdentityRoot = () => ({ type: "Column", padding: 16, children: [Txt(T.noIdentity), Txt(T.noIdentityText, { color: "muted" })] });
+function titleKind(context) {
+  if (context.kind === "episode") return "series";
+  if (context.kind === "movie") return "movie";
+  return null;
+}
 function plainTitleText(context) {
   const name = String(context.title || "").trim();
-  if (context.kind === "series" && Number.isInteger(context.season) && Number.isInteger(context.episode)) {
-    return `${name} — T${context.season}·E${context.episode}`;
+  if (titleKind(context) === "series" && Number.isInteger(context.season) && Number.isInteger(context.episode)) {
+    const [es, en] = T.episodeFragment(name, context.season, context.episode);
+    return context.lang === "en" ? en : es;
   }
   return name;
 }
 function attachFromContext(context) {
+  const kind = titleKind(context);
+  if (!kind) return null;
   const id = context && context.ids && context.ids.tmdb;
   if (!Number.isInteger(id) || id <= 0) return null;
-  return { kind: context.kind, tmdbId: id, title: context.title, year: context.year };
+  const year = Number.parseInt(context.year, 10);
+  return { kind, tmdbId: id, title: context.title, year: Number.isFinite(year) ? year : void 0 };
 }
 var FEED = "feed";
 var communityIdForBody = (state) => state.communityId && state.communityId !== FEED ? state.communityId : null;
@@ -2753,10 +2767,9 @@ function composeRoot(state, communities) {
       key: "text",
       multiline: true,
       maxLength: 500,
-      value: state.text || "",
+      value: "",
       hintText: T.commentHint[0],
-      hintTextEn: T.commentHint[1],
-      onChanged: "setText"
+      hintTextEn: T.commentHint[1]
     },
     {
       type: "DropdownButton",
@@ -2802,9 +2815,9 @@ async function postFromContext(event, context) {
   const state = context.state || {};
   const cache = await carryCache(state);
   const attach = attachFromContext(context);
-  const isSeries = context.kind === "series";
+  const isSeries = titleKind(context) === "series";
   const forceEmpty = event.name === "like";
-  const typed = String(state.text || "").trim();
+  const typed = String(event.values && event.values.text || "").trim();
   let text;
   let season = null;
   let episode = null;
@@ -2821,30 +2834,35 @@ async function postFromContext(event, context) {
   const json = postBody({ text, attach, season, episode, communityId: communityIdForBody(state) });
   const post2 = await callFresh("/posts", { method: "POST", json });
   const [es, en] = moderationToast(post2) || T.published;
-  return { state: { ...state, ...cache, text: "" }, toast: es, toastEn: en };
+  const base = { me: cache.me, communities: cache.communities };
+  return {
+    state: forceEmpty ? base : { ...base, inputs: { text: "" } },
+    toast: es,
+    toastEn: en
+  };
 }
-async function panelAction({ event, context }) {
+async function panelAction(event, context) {
   const state = context && context.state || {};
   try {
     switch (event.name) {
       case "send":
       case "like":
         return await postFromContext(event, context);
-      case "setText":
-        return { state: { ...state, ...await carryCache(state), text: event.value } };
       case "checkHandle": {
         const h = String(event.value || "").trim().replace(/^@/, "").toLowerCase();
-        if (h.length < 3) return { state: { ...state, handleCheck: null } };
-        return { state: { ...state, handleCheck: await call("/handles/" + encodeURIComponent(h)) } };
+        if (h.length < 3) return { state: { handleCheck: null } };
+        return { state: { handleCheck: await call("/handles/" + encodeURIComponent(h)) } };
       }
       case "pickHandle": {
         const values = event.values || {};
         const me = await callFresh("/me", { method: "PATCH", json: { handle: values.handleText, name: values.nameText } });
         const [es, en] = T.pickedHandle(me.handle);
-        return { state: { ...state, me, handleCheck: null }, toast: es, toastEn: en };
+        return { state: { me, handleCheck: null }, toast: es, toastEn: en };
       }
-      case "pickCommunity":
-        return { state: { ...state, ...await carryCache(state), communityId: event.value } };
+      case "pickCommunity": {
+        const cache = await carryCache(state);
+        return { state: { me: cache.me, communities: cache.communities, communityId: event.value } };
+      }
       default:
         return null;
     }
@@ -2853,6 +2871,8 @@ async function panelAction({ event, context }) {
     if (code === "rate_limited") return toast2(T.tooFast);
     if (code === "not_member") return toast2(T.notMember);
     if (code === "muted") return toast2(T.panelMutedToast);
+    if (code === "handle_taken") return toast2(T.handleTaken);
+    if (code === "bad_handle") return toast2(T.badHandle);
     return toast2(T.offline);
   }
 }

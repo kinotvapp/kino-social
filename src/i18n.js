@@ -153,6 +153,11 @@ export const T = {
   feedOption: ["Feed general", "General feed"],
   /** "¡Listo! Ya eres @ana" — the toast after picking a @handle. */
   pickedHandle: (handle) => [`¡Listo! Ya eres @${handle}`, `Done! You're @${handle}`],
+  // Handle-picker errors (shared between events.js's own flow and the panel tab's pickHandle).
+  handleTaken: ["Ese @usuario ya existe: prueba otro", "That @username is taken: try another"],
+  badHandle: ["Ese @usuario no se puede usar", "That @username can't be used"],
+  /** "Nombre — T4.E3" / "Nombre — S4.E3": the compose box's plain-text season/episode fragment, es then en. */
+  episodeFragment: (name, s, e) => [`${name} — T${s}.E${e}`, `${name} — S${s}.E${e}`],
 };
 
 /** "vio *Título*" for a movie, "vio T4 · E3 de *Serie*" for an episode. */

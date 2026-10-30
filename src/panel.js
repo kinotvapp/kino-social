@@ -19,20 +19,32 @@ const screenResult = (root) => ({ format: "screen", title: "Kino Social", root }
 
 const noIdentityRoot = () => ({ type: "Column", padding: 16, children: [Txt(T.noIdentity), Txt(T.noIdentityText, { color: "muted" })] });
 
+/** Kino's wire vocabulary ("movie"/"episode"/"live") translated to what postBody/attach.js expects ("movie"/"series"); null for live (not a goal here, per spec section 3). */
+function titleKind(context) {
+  if (context.kind === "episode") return "series";
+  if (context.kind === "movie") return "movie";
+  return null;
+}
+
 /** "Título — T4·E3": the season/episode fragment inlined (watchedLine's phrasing is for a saved post, not compose). */
 function plainTitleText(context) {
   const name = String(context.title || "").trim();
-  if (context.kind === "series" && Number.isInteger(context.season) && Number.isInteger(context.episode)) {
-    return `${name} — T${context.season}·E${context.episode}`;
+  if (titleKind(context) === "series" && Number.isInteger(context.season) && Number.isInteger(context.episode)) {
+    const [es, en] = T.episodeFragment(name, context.season, context.episode);
+    return context.lang === "en" ? en : es;
   }
   return name;
 }
 
-/** `{ kind, tmdbId, title, year }` for `postBody`'s `attach`, only when `context.ids.tmdb` is a usable id. */
+/** `{ kind, tmdbId, title, year }` for `postBody`'s `attach`, only when `context.ids.tmdb` is a usable id and the kind translates to one `postBody` understands (not "live"). */
 function attachFromContext(context) {
+  const kind = titleKind(context);
+  if (!kind) return null;
   const id = context && context.ids && context.ids.tmdb;
   if (!Number.isInteger(id) || id <= 0) return null;
-  return { kind: context.kind, tmdbId: id, title: context.title, year: context.year };
+  // Kino sends `year` as a string (`subject?.year?.toString()`); the backend's post-attach only accepts an integer.
+  const year = Number.parseInt(context.year, 10);
+  return { kind, tmdbId: id, title: context.title, year: Number.isFinite(year) ? year : undefined };
 }
 
 /** The "feed" sentinel (the dropdown's own default option) means "no community": `postBody` wants `null` for that. */
@@ -77,8 +89,8 @@ async function carryCache(state) {
 
 function composeRoot(state, communities) {
   return { type: "Column", padding: 16, gap: 12, children: [
-    { type: "TextField", key: "text", multiline: true, maxLength: 500, value: state.text || "",
-      hintText: T.commentHint[0], hintTextEn: T.commentHint[1], onChanged: "setText" },
+    { type: "TextField", key: "text", multiline: true, maxLength: 500, value: "",
+      hintText: T.commentHint[0], hintTextEn: T.commentHint[1] },
     { type: "DropdownButton", key: "communityId", labelText: T.communities[0], labelTextEn: T.communities[1],
       value: state.communityId ?? FEED, onChanged: "pickCommunity", options: communityOptions(communities) },
     { type: "Row", gap: 8, children: [
@@ -122,9 +134,9 @@ async function postFromContext(event, context) {
   const state = context.state || {};
   const cache = await carryCache(state);
   const attach = attachFromContext(context);
-  const isSeries = context.kind === "series";
+  const isSeries = titleKind(context) === "series";
   const forceEmpty = event.name === "like";
-  const typed = String(state.text || "").trim();
+  const typed = String((event.values && event.values.text) || "").trim();
   let text;
   let season = null;
   let episode = null;
@@ -133,6 +145,8 @@ async function postFromContext(event, context) {
     if (isSeries) {
       season = context.season;
       episode = context.episode;
+      // A season-0 special loses its T.E tag today: attach.js's postBody guard (shipped, not touched by this fix
+      // round) requires season > 0, though the backend itself accepts season >= 0. Known, deliberately-unfixed gap.
     }
   } else {
     const fragment = plainTitleText(context);
@@ -141,31 +155,35 @@ async function postFromContext(event, context) {
   const json = postBody({ text, attach, season, episode, communityId: communityIdForBody(state) });
   const post = await callFresh("/posts", { method: "POST", json });
   const [es, en] = moderationToast(post) || T.published;
-  return { state: { ...state, ...cache, text: "" }, toast: es, toastEn: en };
+  const base = { me: cache.me, communities: cache.communities };
+  return {
+    state: forceEmpty ? base : { ...base, inputs: { text: "" } },
+    toast: es, toastEn: en,
+  };
 }
 
-export async function panelAction({ event, context }) {
+export async function panelAction(event, context) {
   const state = (context && context.state) || {};
   try {
     switch (event.name) {
       case "send":
       case "like":
         return await postFromContext(event, context);
-      case "setText":
-        return { state: { ...state, ...(await carryCache(state)), text: event.value } };
       case "checkHandle": {
         const h = String(event.value || "").trim().replace(/^@/, "").toLowerCase();
-        if (h.length < 3) return { state: { ...state, handleCheck: null } };
-        return { state: { ...state, handleCheck: await call("/handles/" + encodeURIComponent(h)) } };
+        if (h.length < 3) return { state: { handleCheck: null } };
+        return { state: { handleCheck: await call("/handles/" + encodeURIComponent(h)) } };
       }
       case "pickHandle": {
         const values = event.values || {};
         const me = await callFresh("/me", { method: "PATCH", json: { handle: values.handleText, name: values.nameText } });
         const [es, en] = T.pickedHandle(me.handle);
-        return { state: { ...state, me, handleCheck: null }, toast: es, toastEn: en };
+        return { state: { me, handleCheck: null }, toast: es, toastEn: en };
       }
-      case "pickCommunity":
-        return { state: { ...state, ...(await carryCache(state)), communityId: event.value } };
+      case "pickCommunity": {
+        const cache = await carryCache(state);
+        return { state: { me: cache.me, communities: cache.communities, communityId: event.value } };
+      }
       default:
         return null;
     }
@@ -174,6 +192,11 @@ export async function panelAction({ event, context }) {
     if (code === "rate_limited") return toast(T.tooFast);
     if (code === "not_member") return toast(T.notMember);
     if (code === "muted") return toast(T.panelMutedToast);
+    if (code === "handle_taken") return toast(T.handleTaken);
+    if (code === "bad_handle") return toast(T.badHandle);
+    // no_identity/device_taken/too_many_devices/unofficial: events.js (the main plugin's own handle flow) answers
+    // these with a `{ state: { problem: code } }` for a dedicated screen this panel tab doesn't have; with no screen
+    // to show it on, falling through to the generic offline toast is the reasonable call here.
     return toast(T.offline);
   }
 }

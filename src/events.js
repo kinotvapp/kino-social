@@ -17,8 +17,8 @@ const toast = ([es, en]) => ({ toast: es, toastEn: en });
 function failure(e) {
   const code = e instanceof ApiError ? e.code : "offline";
   if (code === "rate_limited") return toast(T.tooFast);
-  if (code === "handle_taken") return toast(["Ese @usuario ya existe: prueba otro", "That @username is taken: try another"]);
-  if (code === "bad_handle") return toast(["Ese @usuario no se puede usar", "That @username can't be used"]);
+  if (code === "handle_taken") return toast(T.handleTaken);
+  if (code === "bad_handle") return toast(T.badHandle);
   if (code === "slug_taken") return toast(T.slugTaken);
   if (["bad_name", "bad_slug", "bad_description"].includes(code)) return toast(T.badCommunity);
   if (code === "not_member") return toast(T.notMember);
