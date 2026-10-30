@@ -8,15 +8,15 @@ Para instalarlo, abre Kino ▸ Plugins ▸ **De Kino** y toca **Instalar**. Nece
 **English.** A small social network inside Kino: share what you watch, comment, follow people and join communities.
 To install it, open Kino ▸ Plugins ▸ **From Kino** and tap **Install**. It needs Kino 0.9.78 or newer.
 
-## Monedas de Kino / Kino coins
+## Kinos
 
-**Español.** Desde la 0.7.0, junto al corazón de cada publicación hay una estrella: cada toque le regala una de tus monedas de Kino a
+**Español.** Desde la 0.7.0, junto al corazón de cada publicación hay una estrella: cada toque le regala uno de tus kinos a
 quien la escribió (ganas una cada 10 minutos que ves, hasta 20 al día). Tu saldo está en tu perfil, y hacia las 8 p. m. te llega un
-aviso con tu saldo si tienes monedas; lo apagas en Ajustes ▸ Plugins ▸ Kino Social ▸ «Aviso diario de saldo».
+aviso con tu saldo si tienes kinos; lo apagas en Ajustes ▸ Plugins ▸ Kino Social ▸ «Aviso diario de saldo».
 
-**English.** From 0.7.0, next to each post's heart there is a star: each tap gives one of your Kino coins to its author (you earn one
+**English.** From 0.7.0, next to each post's heart there is a star: each tap gives one of your Kinos to its author (you earn one
 every 10 minutes you watch, up to 20 a day). Your balance is on your profile, and around 8 p.m. a notice tells you your balance if you
-have coins; switch it off in Settings ▸ Plugins ▸ Kino Social ▸ "Daily balance notice".
+have Kinos; switch it off in Settings ▸ Plugins ▸ Kino Social ▸ "Daily balance notice".
 
 ## Moderation / Moderación
 

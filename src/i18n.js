@@ -144,21 +144,21 @@ export const T = {
   mutedUntilDialog: ["No podrás publicar ni comentar hasta las ", "You won't be able to post or comment until "],
   mutedUntilLine: ["No puedes publicar ni comentar hasta las ", "You can't post or comment until "],
   ok: ["Entendido", "OK"],
-  // Kino coins: one per tap for someone's post; earned by watching (1 every 10 minutes, at most 20 a day).
-  giveCoin: ["Regalar una moneda", "Give a coin"],
-  coinShort: ["Moneda", "Coin"],
-  coinGiven: ["Le regalaste una moneda", "You gave a coin"],
-  coinNoBalance: ["Aún no tienes monedas: ganas una cada 10 minutos que ves", "You have no coins yet: you earn one every 10 minutes you watch"],
-  coinSelf: ["No puedes regalarte monedas", "You can't give coins to yourself"],
-  coinUnavailable: ["Las monedas no están disponibles ahora", "Coins aren't available right now"],
-  coinBalance: (n) => [n === 1 ? "1 moneda" : `${n} monedas`, n === 1 ? "1 coin" : `${n} coins`],
-  coinTitle: ["Tus monedas de Kino", "Your Kino coins"],
+  // Kinos (Kino coins): one per tap for someone's post; earned by watching (1 every 10 minutes, at most 20 a day).
+  giveCoin: ["Regalar un kino", "Give a Kino"],
+  coinShort: ["Kino", "Kino"],
+  coinGiven: ["Le regalaste un kino", "You gave a Kino"],
+  coinNoBalance: ["Aún no tienes kinos: ganas uno cada 10 minutos que ves", "You have no Kinos yet: you earn one every 10 minutes you watch"],
+  coinSelf: ["No puedes regalarte kinos", "You can't give Kinos to yourself"],
+  coinUnavailable: ["Los kinos no están disponibles ahora", "Kinos aren't available right now"],
+  coinBalance: (n) => [n === 1 ? "1 kino" : `${n} kinos`, n === 1 ? "1 Kino" : `${n} Kinos`],
+  coinTitle: ["Tus kinos", "Your Kinos"],
   coinToday: (earned, cap) => [`Hoy ganaste ${earned} de ${cap}`, `Today you earned ${earned} of ${cap}`],
-  coinHint: ["Ganas una cada 10 minutos que ves; regálalas desde una publicación", "You earn one every 10 minutes you watch; give them from a post"],
+  coinHint: ["Ganas uno cada 10 minutos que ves; regálalos desde una publicación", "You earn one every 10 minutes you watch; give them from a post"],
   // The daily balance notice (the job, around 20:00) and its switch in the plugin's settings.
-  coinNoticeTitle: (n) => [n === 1 ? "Tienes 1 moneda de Kino" : `Tienes ${n} monedas de Kino`, n === 1 ? "You have 1 Kino coin" : `You have ${n} Kino coins`],
+  coinNoticeTitle: (n) => [n === 1 ? "Tienes 1 kino" : `Tienes ${n} kinos`, n === 1 ? "You have 1 Kino" : `You have ${n} Kinos`],
   coinNoticeEarned: (n) => [n === 1 ? "Hoy ganaste 1 viendo" : `Hoy ganaste ${n} viendo`, n === 1 ? "You earned 1 today by watching" : `You earned ${n} today by watching`],
-  coinNoticeSpend: ["Regálalas a las publicaciones que te gusten", "Give them to the posts you like"],
+  coinNoticeSpend: ["Regálalos a las publicaciones que te gusten", "Give them to the posts you like"],
 };
 
 /** "vio *Título*" for a movie, "vio T4 · E3 de *Serie*" for an episode. */
