@@ -48,7 +48,10 @@ async function loadProfile(me) {
 }
 
 async function loadCommunity(id) {
-  const [community, page] = await Promise.all([call("/communities/" + id), call(`/communities/${id}/feed?limit=20`)]);
+  const community = await call("/communities/" + id);
+  // A private community's feed is for its members: a visitor sees what it is and asks to join.
+  if (community.private && !community.joined) return { community, cfeed: [], cnext: null };
+  const page = await call(`/communities/${id}/feed?limit=20`);
   return { community, cfeed: page.items, cnext: page.next };
 }
 
@@ -191,7 +194,20 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "joinCommunity":
       case "leaveCommunity": {
         const c = await callFresh(`/communities/${arg}/join`, { method: name === "joinCommunity" ? "POST" : "DELETE" });
-        return { state: patchCommunity(s, c) };
+        const asked = name === "joinCommunity" && c.requested;
+        return { state: patchCommunity(s, c), ...(asked ? toast(T.requestSent) : {}) };
+      }
+      case "openRequests": {
+        if (!s.community) return null;
+        const r = await call(`/communities/${s.community.id}/requests`);
+        return { state: { crequests: r.items }, ui: [{ open: "communityRequests" }] };
+      }
+      case "approveRequest":
+      case "rejectRequest": {
+        if (!s.community) return null;
+        const c = await callFresh(`/communities/${s.community.id}/requests/${arg}`, { method: "POST", json: { approve: name === "approveRequest" } });
+        const crequests = (s.crequests || []).filter((p) => !sameId(p.id, arg));
+        return { state: { ...patchCommunity(s, c), crequests }, ...(crequests.length ? {} : { ui: [{ close: "communityRequests" }] }) };
       }
       case "searchCommunities": {
         const q = String(inputs.communitySearch || "").trim();
@@ -202,9 +218,10 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         const values = (arguments[0] && arguments[0].values) || inputs;
         const c = await callFresh("/communities", { method: "POST", json: {
           name: String(values.communityName || "").trim(), slug: String(values.communitySlug || "").trim(),
-          description: await clean(String(values.communityDescription || "").trim()) } });
+          description: await clean(String(values.communityDescription || "").trim()), private: values.communityPrivate === true } });
         return { route: { push: "community", params: { id: String(c.id) } },
-          state: { view: "community", community: c, cfeed: [], cnext: null, inputs: { communityName: "", communitySlug: "", communityDescription: "" },
+          state: { view: "community", community: c, cfeed: [], cnext: null,
+            inputs: { communityName: "", communitySlug: "", communityDescription: "", communityPrivate: false },
             ...(s.communities ? { communities: { ...s.communities, mine: [...s.communities.mine, c] } } : {}) },
           ui: [{ close: "createCommunity" }], ...toast(T.communityCreated) };
       }

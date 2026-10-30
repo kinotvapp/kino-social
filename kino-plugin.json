@@ -1,7 +1,7 @@
 {
   "id": "kino-social",
   "name": "Kino Social",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "apiVersion": 15,
   "entry": "plugin.js",
   "description": "Experimento: un feed para contar lo que ves, con comentarios, perfiles y personas a las que seguir",
@@ -11,6 +11,12 @@
     "129-158-250-81.sslip.io"
   ],
   "fetchHosts": "any",
+  "welcomeNotice": {
+    "title": "¡Bienvenido a Kino Social!",
+    "titleEn": "Welcome to Kino Social!",
+    "text": "Ven y mira lo que pasa en la comunidad",
+    "textEn": "Come and see what is going on in the community"
+  },
   "capabilities": [
     "screen",
     "library",

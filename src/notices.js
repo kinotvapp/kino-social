@@ -16,6 +16,21 @@ function noticeOf(n) {
   }
   const others = Math.max(0, (n.count || 1) - 1);
   const excerpt = (n.postText || "").slice(0, 120);
+  if (n.kind === "community_request" || n.kind === "community_approved") {
+    const place = (n.community && n.community.name) || "la comunidad";
+    const placeEn = (n.community && n.community.name) || "the community";
+    const go = { screen: { route: "community", args: { id: String(n.community && n.community.id) } } };
+    if (n.kind === "community_approved") {
+      return { id: "ca" + n.id, title: `Ya eres parte de ${place}`, titleEn: `You're in ${placeEn}`,
+        text: "Tu solicitud fue aceptada", textEn: "Your request was accepted", go };
+    }
+    return {
+      id: "cr" + n.id,
+      title: others ? `${who} y ${others} más quieren unirse a ${place}` : `${who} quiere unirse a ${place}`,
+      titleEn: others ? `${who} and ${others} more want to join ${placeEn}` : `${who} wants to join ${placeEn}`,
+      text: "Revisa las solicitudes", textEn: "Review the requests", go,
+    };
+  }
   if (n.kind === "community_post" || n.kind === "community_join") {
     const place = (n.community && n.community.name) || "tu comunidad";
     const placeEn = (n.community && n.community.name) || "your community";

@@ -110,6 +110,29 @@ function noticeOf(n) {
   }
   const others = Math.max(0, (n.count || 1) - 1);
   const excerpt = (n.postText || "").slice(0, 120);
+  if (n.kind === "community_request" || n.kind === "community_approved") {
+    const place = n.community && n.community.name || "la comunidad";
+    const placeEn = n.community && n.community.name || "the community";
+    const go = { screen: { route: "community", args: { id: String(n.community && n.community.id) } } };
+    if (n.kind === "community_approved") {
+      return {
+        id: "ca" + n.id,
+        title: `Ya eres parte de ${place}`,
+        titleEn: `You're in ${placeEn}`,
+        text: "Tu solicitud fue aceptada",
+        textEn: "Your request was accepted",
+        go
+      };
+    }
+    return {
+      id: "cr" + n.id,
+      title: others ? `${who} y ${others} más quieren unirse a ${place}` : `${who} quiere unirse a ${place}`,
+      titleEn: others ? `${who} and ${others} more want to join ${placeEn}` : `${who} wants to join ${placeEn}`,
+      text: "Revisa las solicitudes",
+      textEn: "Review the requests",
+      go
+    };
+  }
   if (n.kind === "community_post" || n.kind === "community_join") {
     const place = n.community && n.community.name || "tu comunidad";
     const placeEn = n.community && n.community.name || "your community";
@@ -212,6 +235,19 @@ var T = {
   emptyCommunityMember: ["Escribe la primera", "Write the first one"],
   emptyCommunityVisitor: ["Únete para publicar aquí", "Join to post here"],
   communityCreated: ["Comunidad creada", "Community created"],
+  // Private communities
+  privateCommunity: ["Comunidad privada", "Private community"],
+  privateHint: ["Para entrar hay que pedirlo y tú decides quién entra", "People ask to join and you decide who gets in"],
+  privateTag: ["Privada", "Private"],
+  askToJoin: ["Pedir unirme", "Ask to join"],
+  requested: ["Solicitud enviada", "Request sent"],
+  requestSent: ["Le avisamos a quien creó la comunidad", "We let the community's creator know"],
+  privateLocked: ["Esta comunidad es privada", "This community is private"],
+  privateLockedText: ["Pide unirte para ver y escribir sus publicaciones", "Ask to join to see and write its posts"],
+  requests: (n) => [n === 1 ? "1 solicitud" : `${n} solicitudes`, n === 1 ? "1 request" : `${n} requests`],
+  joinRequests: ["Solicitudes para unirse", "Join requests"],
+  approve: ["Aceptar", "Accept"],
+  reject: ["Rechazar", "Decline"],
   slugTaken: ["Ese @identificador ya existe: prueba otro", "That @handle is taken: try another"],
   badCommunity: ["Revisa el nombre y el @identificador", "Check the name and the @handle"],
   notMember: ["Únete a la comunidad para publicar", "Join the community to post"],
@@ -1125,6 +1161,18 @@ function Mark(c, radius = 24) {
 }
 function joinButton(c, key, strong = false) {
   if (c.owner) return null;
+  if (c.private && !c.joined) {
+    return c.requested ? {
+      type: "Button",
+      variant: "secondary",
+      key,
+      icon: "schedule",
+      labelText: T.requested[0],
+      labelTextEn: T.requested[1],
+      selected: true,
+      onPressed: { event: "leaveCommunity", arg: String(c.id) }
+    } : strong ? Button(T.askToJoin, { event: "joinCommunity", arg: String(c.id) }, { key, icon: "lock" }) : { type: "Button", variant: "secondary", key, icon: "lock", labelText: T.askToJoin[0], labelTextEn: T.askToJoin[1], onPressed: { event: "joinCommunity", arg: String(c.id) } };
+  }
   return c.joined ? {
     type: "Button",
     variant: "secondary",
@@ -1143,7 +1191,10 @@ function communityRow(c) {
       Mark(c),
       { type: "Column", flex: 1, gap: 0, children: [
         Raw(c.name, { style: "h5", bold: true, maxLines: 1 }),
-        Txt([`@${c.slug} · ${membersLine(c)[0]}`, `@${c.slug} · ${membersLine(c)[1]}`], { style: "caption", color: "muted", maxLines: 1 }),
+        Txt([
+          `@${c.slug} · ${membersLine(c)[0]}${c.private ? " · " + T.privateTag[0] : ""}`,
+          `@${c.slug} · ${membersLine(c)[1]}${c.private ? " · " + T.privateTag[1] : ""}`
+        ], { style: "caption", color: "muted", maxLines: 1 }),
         ...c.description ? [Raw(c.description, { style: "caption", maxLines: 2 })] : []
       ] },
       ...join ? [join] : []
@@ -1174,6 +1225,15 @@ function createSheet() {
         maxLength: 200,
         labelText: T.communityDescription[0],
         labelTextEn: T.communityDescription[1]
+      },
+      {
+        type: "Switch",
+        key: "communityPrivate",
+        value: false,
+        labelText: T.privateCommunity[0],
+        labelTextEn: T.privateCommunity[1],
+        hint: T.privateHint[0],
+        hintEn: T.privateHint[1]
       },
       { type: "ElevatedButton", key: "createCommunityBtn", icon: "add", labelText: T.create[0], labelTextEn: T.create[1], submit: true, fill: true }
     ] }
@@ -1241,8 +1301,13 @@ function communitySource(s, ctx) {
       ] }
     ] },
     ...c.description ? [Raw(c.description)] : [],
-    ...join ? [{ type: "Row", children: [join] }] : c.owner ? [Txt(T.youOwn, { style: "caption", color: "muted" })] : []
+    ...join ? [{ type: "Row", children: [join] }] : c.owner ? [Txt(T.youOwn, { style: "caption", color: "muted" })] : [],
+    // The owner of a private one: who is waiting to get in.
+    ...c.owner && c.private && c.pending ? [{ type: "Row", children: [
+      Button(T.requests(c.pending), { event: "openRequests", timeoutMs: 2e4 }, { key: "cRequests", icon: "person_add" })
+    ] }] : []
   ] };
+  const locked = c.private && !c.joined;
   return {
     items: s.cfeed,
     next: s.cnext,
@@ -1252,7 +1317,7 @@ function communitySource(s, ctx) {
     more: "moreCommunity",
     canPost: !!c.joined,
     header,
-    empty: {
+    empty: locked ? { type: "emptyState", icon: "lock", title: T.privateLocked[0], titleEn: T.privateLocked[1], text: T.privateLockedText[0], textEn: T.privateLockedText[1] } : {
       type: "emptyState",
       icon: "edit",
       title: T.emptyCommunity[0],
@@ -1262,12 +1327,34 @@ function communitySource(s, ctx) {
     }
   };
 }
+function requestsSheet(s) {
+  const rows = (s.crequests || []).map((p) => ({ type: "Row", key: "rq" + p.id, gap: 8, crossAxisAlignment: "center", children: [
+    {
+      type: "ListTile",
+      flex: 1,
+      title: p.name,
+      titleEn: p.name,
+      subtitle: p.handle ? "@" + p.handle : void 0,
+      leading: Avatar(p),
+      onTap: { event: "openUser", arg: String(p.id) }
+    },
+    { type: "Button", variant: "secondary", key: "rqNo" + p.id, labelText: T.reject[0], labelTextEn: T.reject[1], onPressed: { event: "rejectRequest", arg: String(p.id) } },
+    Button(T.approve, { event: "approveRequest", arg: String(p.id) }, { key: "rqOk" + p.id })
+  ] }));
+  return {
+    type: "BottomSheet",
+    key: "communityRequests",
+    title: T.joinRequests[0],
+    titleEn: T.joinRequests[1],
+    children: [{ type: "Column", gap: 8, children: rows }]
+  };
+}
 function communityView(s, ctx) {
   const c = s.community;
   return {
     type: "Scaffold",
     appBar: { type: "AppBar", title: c ? c.name : T.communities[0], titleEn: c ? c.name : T.communities[1], leading: IconBtn("arrow_back", T.back, "back") },
-    body: c ? feedTab(s, ctx, communitySource(s, ctx)) : { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] }
+    body: c ? { type: "Column", flex: 1, children: [feedTab(s, ctx, communitySource(s, ctx)), requestsSheet(s)] } : { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] }
   };
 }
 
@@ -1935,7 +2022,9 @@ async function loadProfile(me) {
   return { profile: p, myActivity: mine.items };
 }
 async function loadCommunity(id) {
-  const [community, page] = await Promise.all([call("/communities/" + id), call(`/communities/${id}/feed?limit=20`)]);
+  const community = await call("/communities/" + id);
+  if (community.private && !community.joined) return { community, cfeed: [], cnext: null };
+  const page = await call(`/communities/${id}/feed?limit=20`);
   return { community, cfeed: page.items, cnext: page.next };
 }
 async function loadThread(postId) {
@@ -2060,7 +2149,20 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       case "joinCommunity":
       case "leaveCommunity": {
         const c = await callFresh(`/communities/${arg}/join`, { method: name === "joinCommunity" ? "POST" : "DELETE" });
-        return { state: patchCommunity(s, c) };
+        const asked = name === "joinCommunity" && c.requested;
+        return { state: patchCommunity(s, c), ...asked ? toast(T.requestSent) : {} };
+      }
+      case "openRequests": {
+        if (!s.community) return null;
+        const r = await call(`/communities/${s.community.id}/requests`);
+        return { state: { crequests: r.items }, ui: [{ open: "communityRequests" }] };
+      }
+      case "approveRequest":
+      case "rejectRequest": {
+        if (!s.community) return null;
+        const c = await callFresh(`/communities/${s.community.id}/requests/${arg}`, { method: "POST", json: { approve: name === "approveRequest" } });
+        const crequests = (s.crequests || []).filter((p) => !sameId(p.id, arg));
+        return { state: { ...patchCommunity(s, c), crequests }, ...crequests.length ? {} : { ui: [{ close: "communityRequests" }] } };
       }
       case "searchCommunities": {
         const q = String(inputs.communitySearch || "").trim();
@@ -2072,7 +2174,8 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         const c = await callFresh("/communities", { method: "POST", json: {
           name: String(values.communityName || "").trim(),
           slug: String(values.communitySlug || "").trim(),
-          description: await clean(String(values.communityDescription || "").trim())
+          description: await clean(String(values.communityDescription || "").trim()),
+          private: values.communityPrivate === true
         } });
         return {
           route: { push: "community", params: { id: String(c.id) } },
@@ -2081,7 +2184,7 @@ async function screenEvent({ name, arg, value, state, route, device }) {
             community: c,
             cfeed: [],
             cnext: null,
-            inputs: { communityName: "", communitySlug: "", communityDescription: "" },
+            inputs: { communityName: "", communitySlug: "", communityDescription: "", communityPrivate: false },
             ...s.communities ? { communities: { ...s.communities, mine: [...s.communities.mine, c] } } : {}
           },
           ui: [{ close: "createCommunity" }],
