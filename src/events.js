@@ -148,9 +148,11 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "open":
         return open(s, route || { name: "main" });
       case "openProfile":
+        // Your profile is a page of its own over the tabs (back arrow and the system back), never a tab: a TabBar can
+        // only mark one of its own tabs, so a hidden one left «Feed» marked and a tap on it did nothing.
+        return { route: { push: "me", params: {} }, state: { ...(await loadProfile(s.me)) } };
       case "tab": {
-        const tab = name === "openProfile" ? "profile" : value;
-        if (tab === "profile") return { state: { tab, ...(await loadProfile(s.me)) } };
+        const tab = value;
         if (tab === "people") {
           const people = await call("/people");
           return { state: { tab, people: people.items, results: undefined } };
@@ -160,7 +162,7 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       }
       case "refresh": {
         const out = { ...(await loadFeed(s)), selected: s.selected };
-        if (s.tab === "profile") Object.assign(out, await loadProfile(s.me));
+        if (route && route.name === "me") Object.assign(out, await loadProfile(s.me));
         if (s.tab === "people") out.people = (await call("/people")).items;
         if (s.tab === "communities") out.communities = await call("/communities");
         await syncActivity().catch(() => 0);
@@ -281,10 +283,9 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "openPost": {
         const thread = await loadThread(arg);
         if (device === "tv") return { state: { thread, selected: String(arg) }, focus: "commentText" };
-        return { state: { thread }, ui: [{ open: "thread" }] };
+        // On a phone the post opens as a page: a chat-like list that stays at its newest comment, the box at the bottom.
+        return { route: { push: "post", params: { id: String(arg) } }, state: { thread } };
       }
-      case "threadClosed":
-        return null;
       case "sendComment": {
         const raw = tidyLines(inputs.commentText);
         if (!raw || !s.thread) return null;
@@ -307,11 +308,13 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         if (s.user) out.user = { ...s.user, posts: (s.user.posts || []).filter(keep) };
         const wasOpen = s.thread && sameId(s.thread.postId, arg);
         if (wasOpen) out.thread = null;
-        return { state: out, ...(wasOpen ? { ui: [{ close: "thread" }] } : {}), ...toast(T.deleted) };
+        // Deleted from its own page: back to where it was opened from.
+        const onItsPage = wasOpen && route && route.name === "post";
+        return { state: { ...out, ...(onItsPage ? { view: "main" } : {}) }, ...(onItsPage ? { route: { pop: true } } : {}), ...toast(T.deleted) };
       }
       case "openUser":
-        if (s.me && sameId(arg, s.me.id)) return { state: { tab: "profile", ...(await loadProfile(s.me)) }, ui: [{ close: "thread" }] };
-        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) }, ui: [{ close: "thread" }] };
+        if (s.me && sameId(arg, s.me.id)) return { route: { push: "me", params: {} }, state: { ...(await loadProfile(s.me)) } };
+        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) } };
       case "back": {
         // Back from a post, a person or a community lands on the main tabs (loading the feed when a notice opened us deep).
         const out = { view: "main" };

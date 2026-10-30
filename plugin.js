@@ -313,6 +313,24 @@ var T = {
   you: ["Tú", "You"],
   back: ["Atrás", "Back"],
   aiNote: ["Revisamos que el texto no tenga groserías", "We check the text has no swear words"],
+  // Attaching a movie or series to a new post
+  attach: ["Adjuntar película o serie", "Attach a movie or series"],
+  searchTitles: ["Busca una película o serie", "Search for a movie or series"],
+  searchTitlesHint: ["Escribe al menos 2 letras", "Type at least 2 letters"],
+  watching: ["Lo que estás viendo", "What you're watching"],
+  noTitles: ["No encontramos películas ni series con ese nombre", "No movies or series by that name"],
+  searchFailed: ["No pudimos buscar ahora: inténtalo de nuevo", "We couldn't search right now: try again"],
+  noTmdb: ["La búsqueda de títulos no está disponible en esta versión de Kino", "Title search isn't available in this Kino version"],
+  movie: ["Película", "Movie"],
+  series: ["Serie", "Series"],
+  /** "2024 · Película" / "2024 · Movie", or the kind alone without a year. */
+  titleLine: (t) => {
+    const [es, en] = t.kind === "movie" ? ["Película", "Movie"] : ["Serie", "Series"];
+    return t.year ? [`${t.year} · ${es}`, `${t.year} · ${en}`] : [es, en];
+  },
+  removeAttach: ["Quitar película o serie", "Remove movie or series"],
+  openInKino: ["Ver en Kino", "Open in Kino"],
+  needTextOrTitle: ["Escribe algo o adjunta una película o serie", "Write something or attach a movie or series"],
   // Moderation: a masked post or comment is a warning (strike); the third in 12 h mutes for 12 h.
   strikeWarning: (n, limit) => [
     `Tu texto tenía palabras ofensivas y se ocultaron. Llevas ${n} de ${limit} avisos: al tercero no podrás publicar ni comentar durante 12 horas.`,
@@ -432,12 +450,14 @@ function linkCard(post2, ctx, pfx) {
   const host = (link.url.match(/^https?:\/\/([^/?#]+)/i) || [])[1] || link.url;
   const https = /^https:\/\//i.test(link.url);
   if (link.tmdb && link.title) {
+    const open2 = { go: { titleByIds: { tmdb: link.tmdb.id, kind: link.tmdb.kind, title: link.title.slice(0, 120) } } };
+    const year = /^\d{4}$/.test(String(link.desc || "")) ? Number(link.desc) : void 0;
     return {
       type: "Card",
       key: pfx + "link-" + post2.id,
       variant: "outlined",
       padding: 12,
-      onTap: { go: { titleByIds: { tmdb: link.tmdb.id, kind: link.tmdb.kind, title: link.title.slice(0, 120) } } },
+      onTap: open2,
       children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
         {
           type: "Image",
@@ -451,10 +471,17 @@ function linkCard(post2, ctx, pfx) {
         },
         { type: "Column", flex: 1, gap: 4, children: [
           Raw(link.title, { style: "h5", bold: true, maxLines: 2 }),
-          ...link.desc ? [Raw(link.desc, { style: "caption", color: "muted" })] : [],
-          Txt(["Ver en Kino", "Watch in Kino"], { style: "label", color: "primary" })
-        ] },
-        { type: "Icon", name: "play", color: "primary" }
+          year || !link.desc ? Txt(T.titleLine({ kind: link.tmdb.kind, year }), { style: "caption", color: "muted" }) : Raw(link.desc, { style: "caption", color: "muted" }),
+          { type: "Row", children: [{
+            type: "Button",
+            variant: "secondary",
+            key: pfx + "open-" + post2.id,
+            icon: "play",
+            labelText: T.openInKino[0],
+            labelTextEn: T.openInKino[1],
+            onPressed: open2
+          }] }
+        ] }
       ] }]
     };
   }
@@ -535,7 +562,8 @@ function postCard(post2, ctx, me, { selected = false, full = false } = {}) {
     ...tv && !full ? { onTap: { event: "openPost", arg: String(post2.id) }, selected } : {},
     children: [
       authorRow(post2, ctx, me, pfx),
-      Raw(post2.text, { maxLines: full ? void 0 : tv ? 4 : 12 }),
+      // The text as written, line breaks included (a post with an attached title may have none).
+      ...post2.text ? [Raw(post2.text, { maxLines: full ? void 0 : tv ? 4 : 12 })] : [],
       ...post2.link ? [linkCard(post2, ctx, pfx)] : [],
       ...!tv || full ? [actionsRow(post2, ctx, pfx, full)] : [{ type: "Row", gap: 16, children: [
         { type: "Row", gap: 4, crossAxisAlignment: "center", children: [{ type: "Icon", name: "heart", color: post2.liked ? "error" : "muted" }, Raw(count(post2.likes || 0), { style: "caption", color: "muted" })] },
@@ -645,28 +673,124 @@ function feedItem(item, ctx, me, selectedId) {
   return null;
 }
 function commentRow(c, me) {
-  const mine = me && c.user.id === me.id;
+  const mine = !!me && String(c.user.id) === String(me.id);
+  const when = { type: "Text", time: c.createdAt, style: "caption", color: "muted" };
+  const bubble = {
+    type: "Card",
+    flex: 5,
+    color: mine ? "primaryContainer" : "surfaceVariant",
+    padding: { x: 12, y: 8 },
+    gap: 4,
+    // The pointed corner sits on the speaker's side.
+    borderRadius: mine ? { topStart: "large", topEnd: "small", bottomStart: "large", bottomEnd: "large" } : { topStart: "small", topEnd: "large", bottomStart: "large", bottomEnd: "large" },
+    children: mine ? [Raw(c.text), { type: "Row", mainAxisAlignment: "end", children: [when] }] : [{ type: "Row", gap: 8, children: [Raw(c.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 }), when] }, Raw(c.text)]
+  };
+  const room = { type: "Spacer", flex: 1 };
   return {
     type: "Row",
     key: "c" + c.id,
     gap: 8,
     crossAxisAlignment: "start",
-    children: [
-      { type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] },
-      {
-        type: "Card",
-        flex: 1,
-        color: mine ? "primaryContainer" : "surfaceVariant",
-        padding: { x: 12, y: 8 },
-        gap: 4,
-        borderRadius: { topStart: "small", topEnd: "large", bottomStart: "large", bottomEnd: "large" },
-        children: [
-          { type: "Row", gap: 8, children: [Raw(c.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 }), { type: "Text", time: c.createdAt, style: "caption", color: "muted" }] },
-          Raw(c.text)
-        ]
-      }
-    ]
+    children: mine ? [room, bubble] : [{ type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] }, bubble, room]
   };
+}
+
+// src/attach.js
+var IMAGES = "https://image.tmdb.org/t/p/w342";
+var MAX_RESULTS = 10;
+var MAX_RECENT = 8;
+var MIN_QUERY = 2;
+var MAX_QUERY = 80;
+var yearOf = (date) => {
+  const y = Number(String(date || "").slice(0, 4));
+  return Number.isInteger(y) && y > 1870 && y < 2100 ? y : void 0;
+};
+function fromTmdb(r, kind) {
+  if (!r || typeof r !== "object" || r.adult === true) return null;
+  const k = r.media_type === "movie" ? "movie" : r.media_type === "tv" ? "series" : r.media_type ? null : kind;
+  if (k !== "movie" && k !== "series") return null;
+  const id = r.id;
+  if (!Number.isInteger(id) || id <= 0 || id >= 1e9) return null;
+  const title = String((k === "movie" ? r.title || r.original_title : r.name || r.original_name) || "").trim();
+  if (!title) return null;
+  const out = { kind: k, tmdbId: id, title: title.slice(0, 120) };
+  const year = yearOf(k === "movie" ? r.release_date : r.first_air_date);
+  if (year) out.year = year;
+  if (typeof r.poster_path === "string" && /^\/[A-Za-z0-9._-]{1,200}$/.test(r.poster_path)) out.poster = IMAGES + r.poster_path;
+  return out;
+}
+var attachKey = (t) => t.kind + ":" + t.tmdbId;
+function dedupe(list, max) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const t of list) {
+    if (!t || seen.has(attachKey(t))) continue;
+    seen.add(attachKey(t));
+    out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+function searchResults(json, kind) {
+  const results = json && Array.isArray(json.results) ? json.results : [];
+  return dedupe(results.map((r) => fromTmdb(r, kind)), MAX_RESULTS);
+}
+function recentFromLibrary(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  return dedupe(list.map((e) => {
+    const id = Number(e && e.ids && e.ids.tmdb);
+    if (!e || e.kind !== "movie" && e.kind !== "series" || !Number.isInteger(id) || id <= 0 || id >= 1e9) return null;
+    return { kind: e.kind, tmdbId: id };
+  }), MAX_RECENT);
+}
+function validAttachment(a) {
+  return !!a && (a.kind === "movie" || a.kind === "series") && Number.isInteger(a.tmdbId) && a.tmdbId > 0 && a.tmdbId < 1e9 && typeof a.title === "string" && a.title.trim().length > 0;
+}
+function pickAttachment(key, ...lists) {
+  for (const list of lists) {
+    const hit = (list || []).find((t) => t && attachKey(t) === String(key));
+    if (hit && validAttachment(hit)) return hit;
+  }
+  return null;
+}
+var canPublish = (text, attach) => String(text || "").trim().length > 0 || validAttachment(attach);
+function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null }) {
+  const picked = validAttachment(attach) ? attach : null;
+  const title = picked || linkTitle;
+  return {
+    text,
+    ...title ? { title } : {},
+    ...!picked && !linkTitle && link && link.title ? { link } : {},
+    ...communityId ? { communityId: Number(communityId) } : {}
+  };
+}
+function cleanQuery(value) {
+  const q = String(value || "").replace(/\s+/g, " ").trim().slice(0, MAX_QUERY);
+  return q.length >= MIN_QUERY ? q : "";
+}
+async function searchTitles(q) {
+  if (typeof kino.tmdb !== "function") return [];
+  const json = await kino.tmdb("/search/multi", { query: q, include_adult: false, language: "es", page: 1 });
+  return searchResults(json);
+}
+async function recentTitles() {
+  if (typeof kino.library !== "object" || !kino.library || typeof kino.tmdb !== "function") return [];
+  let entries;
+  try {
+    entries = await kino.library.watched({ limit: 30 });
+  } catch (_) {
+    return [];
+  }
+  const out = [];
+  for (const r of recentFromLibrary(entries)) {
+    try {
+      const d = await kino.tmdb((r.kind === "movie" ? "/movie/" : "/tv/") + r.tmdbId, { language: "es" });
+      const t = fromTmdb(d && { ...d, id: r.tmdbId }, r.kind);
+      if (t) out.push(t);
+    } catch (_) {
+    }
+  }
+  return out;
 }
 
 // src/ui/views.js
@@ -689,28 +813,103 @@ function composerPrompt(s) {
     ] }]
   };
 }
+function titleRow(t, props = {}, trailing = []) {
+  return {
+    type: "Card",
+    variant: "outlined",
+    padding: 8,
+    ...props,
+    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      {
+        type: "Image",
+        width: 40,
+        aspect: "2:3",
+        borderRadius: "small",
+        alt: t.title,
+        altEn: t.title,
+        ...t.poster ? { url: t.poster } : {},
+        fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: t.kind === "movie" ? "movie" : "tv", margin: 8 }] }
+      },
+      { type: "Column", flex: 1, gap: 4, children: [
+        Raw(t.title, { style: "h5", bold: true, maxLines: 2 }),
+        Txt(T.titleLine(t), { style: "caption", color: "muted", maxLines: 1 })
+      ] },
+      ...trailing
+    ] }]
+  };
+}
+function titlePicker(s) {
+  const q = s.pickQuery || "";
+  const pick = (t) => titleRow(t, { key: "pick-" + t.kind + "-" + t.tmdbId, onTap: { event: "attachTitle", arg: attachKey(t) } });
+  const list = [];
+  if (!q) {
+    const recent = s.pickRecent || [];
+    if (recent.length) list.push(Txt(T.watching, { style: "label", color: "muted" }), ...recent.map(pick));
+    else list.push(Txt(T.searchTitlesHint, { style: "caption", color: "muted" }));
+  } else if (s.pickError) list.push(Txt(s.pickError === "noTmdb" ? T.noTmdb : T.searchFailed, { style: "caption", color: "error" }));
+  else if (s.pickResults == null) list.push({ type: "CircularProgressIndicator" });
+  else if (!s.pickResults.length) list.push(Txt(T.noTitles, { style: "caption", color: "muted" }));
+  else list.push(...s.pickResults.map(pick));
+  return {
+    type: "Card",
+    key: "picker",
+    background: "surfaceVariant",
+    padding: 12,
+    gap: 8,
+    children: [
+      { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+        Txt(T.attach, { style: "h5", bold: true, flex: 1 }),
+        IconBtn("close", T.cancel, "cancelAttach", { key: "cancelAttach" })
+      ] },
+      {
+        type: "TextField",
+        key: "titleSearch",
+        kind: "search",
+        maxLength: MAX_QUERY,
+        labelText: T.searchTitles[0],
+        labelTextEn: T.searchTitles[1],
+        onChanged: "searchTitles",
+        autofocus: true
+      },
+      ...list
+    ]
+  };
+}
 function composerSheet(s) {
   const until = muted(s);
   const lock = until ? { enabled: false } : {};
+  const attach = s.attach || null;
+  const attachment = attach ? titleRow(attach, { key: "attached" }, [IconBtn("close", T.removeAttach, "clearAttach", { key: "clearAttach", ...lock })]) : s.picking ? titlePicker(s) : {
+    type: "Button",
+    variant: "secondary",
+    key: "openAttach",
+    icon: "movie",
+    labelText: T.attach[0],
+    labelTextEn: T.attach[1],
+    onPressed: { event: "openAttach", timeoutMs: 2e4 },
+    ...lock
+  };
   return {
     type: "BottomSheet",
     key: "composer",
     title: T.compose[0],
     titleEn: T.compose[1],
     children: [{ type: "Form", key: "composeForm", gap: 12, onSubmit: { event: "publish", timeoutMs: 28e3 }, children: [
+      // Several lines (Enter is a new line); Kino draws a multi-line field 3 lines high, growing to 8.
       {
         type: "TextField",
         key: "postText",
         multiline: true,
-        maxLines: 6,
+        maxLines: 8,
         maxLength: MAX_TEXT,
-        required: true,
+        required: !attach,
         labelText: T.prompt[0],
         labelTextEn: T.prompt[1],
         hintText: T.postHint[0],
         hintTextEn: T.postHint[1],
         ...lock
       },
+      attachment,
       until ? muteLine(until) : Txt(T.aiNote, { style: "caption", color: "muted" }),
       { type: "ElevatedButton", key: "publish", icon: "send", labelText: T.publish[0], labelTextEn: T.publish[1], submit: true, fill: true, ...lock }
     ] }]
@@ -775,39 +974,53 @@ function feedList(s, ctx, src = generalSource(s)) {
     empty: src.empty || emptyFeed()
   };
 }
-function threadBody(s, ctx, { pane = false } = {}) {
+function threadItems(s, ctx) {
   const th = s.thread;
-  if (!th || !th.post) {
-    return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
-  }
   const comments = th.items || [];
-  const until = muted(s);
   return [
     postCard(th.post, { ...ctx, device: "phone" }, s.me, { full: true }),
-    Txt(T.comments, { style: "h5", bold: true, margin: { top: 4 } }),
-    ...comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { color: "muted" })],
+    Txt(T.comments, { key: "commentsTitle", style: "h5", bold: true, margin: { top: 4 } }),
+    ...comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { key: "noComments", color: "muted" })]
+  ];
+}
+function commentBox(s) {
+  const until = muted(s);
+  if (until) return { type: "Column", key: "commentBox", gap: 4, children: [muteLine(until)] };
+  return { type: "Column", key: "commentBox", gap: 4, children: [
     {
       type: "TextField",
       key: "commentText",
+      multiline: true,
+      maxLines: 6,
       maxLength: 300,
       labelText: T.commentHint[0],
       labelTextEn: T.commentHint[1],
-      onSubmitted: "sendComment",
-      trailingIcon: "send",
-      trailingLabel: T.send[0],
-      trailingLabelEn: T.send[1],
-      onTrailingTap: "sendComment",
-      ...until ? { enabled: false } : {}
+      onSubmitted: "sendComment"
     },
-    ...until ? [muteLine(until)] : []
-  ];
+    { type: "Row", mainAxisAlignment: "end", children: [
+      {
+        type: "Button",
+        variant: "secondary",
+        key: "sendComment",
+        icon: "send",
+        labelText: T.send[0],
+        labelTextEn: T.send[1],
+        onPressed: { event: "sendComment", timeoutMs: 2e4 }
+      }
+    ] }
+  ] };
+}
+function threadBody(s, ctx) {
+  if (!s.thread || !s.thread.post) {
+    return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
+  }
+  return [...threadItems(s, ctx), commentBox(s)];
 }
 function feedTab(s, ctx, src = generalSource(s)) {
   if (!isTv(ctx)) {
     return { type: "Column", flex: 1, children: [
       feedList(s, ctx, src),
-      composerSheet(s),
-      { type: "BottomSheet", key: "thread", title: T.post[0], titleEn: T.post[1], onClose: "threadClosed", children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] }
+      composerSheet(s)
     ] };
   }
   return { type: "Row", flex: 1, gap: 24, padding: { x: 32, y: 16 }, children: [
@@ -831,7 +1044,7 @@ function feedTab(s, ctx, src = generalSource(s)) {
       background: "surfaceVariant",
       padding: 16,
       canRequestFocus: !(s.thread && s.thread.post),
-      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx, { pane: true }) }] }]
+      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] }]
     },
     composerSheet(s)
   ] };
@@ -1025,7 +1238,7 @@ function peopleTab(s, ctx) {
   ] };
 }
 function mainView(s, ctx) {
-  const tab = ["feed", "communities", "profile", "people"].includes(s.tab) ? s.tab : "feed";
+  const tab = ["feed", "communities", "people"].includes(s.tab) ? s.tab : "feed";
   const unread = s.unread || 0;
   const tabs = { type: "TabBar", key: "tabs", value: tab, onChanged: "tab", tabs: [
     { value: "feed", label: T.feed[0], labelEn: T.feed[1] },
@@ -1034,10 +1247,9 @@ function mainView(s, ctx) {
   ] };
   const me = IconBtn("person", T.profile, "openProfile", {
     key: "openProfile",
-    selected: tab === "profile",
     ...unread ? { badge: { text: String(Math.min(unread, 99)) } } : {}
   });
-  const body = tab === "profile" ? profileTab(s, ctx) : tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
+  const body = tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
   return {
     type: "Scaffold",
     every: { ms: 6e4, event: "tick" },
@@ -1049,17 +1261,21 @@ function mainView(s, ctx) {
     body
   };
 }
+function meView(s, ctx) {
+  return { type: "Scaffold", appBar: {
+    type: "AppBar",
+    title: T.profile[0],
+    titleEn: T.profile[1],
+    leading: IconBtn("arrow_back", T.back, "back")
+  }, body: profileTab(s, ctx) };
+}
 function postView(s, ctx) {
-  return {
-    type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      title: T.post[0],
-      titleEn: T.post[1],
-      leading: IconBtn("arrow_back", T.back, "back")
-    },
-    body: { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 12, maxWidth: 640, alignSelf: "center", fill: true, children: threadBody(s, ctx) }] }
-  };
+  const appBar = { type: "AppBar", title: T.post[0], titleEn: T.post[1], leading: IconBtn("arrow_back", T.back, "back") };
+  if (!s.thread || !s.thread.post) return { type: "Scaffold", appBar, body: { type: "Column", padding: pagePadding, children: threadBody(s, ctx) } };
+  return { type: "Scaffold", appBar, body: { type: "Column", flex: 1, children: [
+    { type: "ListView", key: "threadList", flex: 1, gap: 12, padding: pagePadding, stickToBottom: true, newItemsHint: true, items: threadItems(s, ctx) },
+    { type: "Column", padding: { x: 12, y: 8 }, children: [commentBox(s)] }
+  ] } };
 }
 function userView(s, ctx) {
   const p = s.user;
@@ -1952,7 +2168,7 @@ async function linkPreview(text) {
 }
 
 // src/titlelink.js
-var IMAGES = "https://image.tmdb.org/t/p/w342";
+var IMAGES2 = "https://image.tmdb.org/t/p/w342";
 var TMDB_LINK = /https?:\/\/(?:www\.)?themoviedb\.org\/(movie|tv)\/(\d{1,9})/i;
 var IMDB_LINK = /https?:\/\/(?:www\.|m\.)?imdb\.com\/title\/(tt\d{7,10})/i;
 async function titleHint(text) {
@@ -1981,11 +2197,17 @@ async function titleHint(text) {
     const year = Number(String((kind === "movie" ? d.release_date : d.first_air_date) || "").slice(0, 4));
     const out = { kind, tmdbId: id, title: title.slice(0, 120) };
     if (Number.isInteger(year) && year > 1870) out.year = year;
-    if (d.poster_path) out.poster = IMAGES + d.poster_path;
+    if (d.poster_path) out.poster = IMAGES2 + d.poster_path;
     return out;
   } catch (_) {
     return null;
   }
+}
+
+// src/lines.js
+var BLANK_RUN = /\n[ \t]*(?:\n[ \t]*)+\n/g;
+function tidyLines(text) {
+  return String(text ?? "").replace(/\r\n?/g, "\n").replace(BLANK_RUN, "\n\n").trim();
 }
 
 // src/events.js
@@ -2003,6 +2225,7 @@ function failure(e) {
   if (["no_identity", "unofficial", "device_taken", "too_many_devices"].includes(code)) return { state: { problem: code } };
   return toast(T.offline);
 }
+var closedPicker = () => ({ picking: false, pickQuery: "", pickResults: null, pickRecent: null, pickError: null });
 var sameId = (a, b) => String(a) === String(b);
 var mergeById = (items) => {
   const seen = /* @__PURE__ */ new Set();
@@ -2101,9 +2324,9 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       case "open":
         return open(s, route || { name: "main" });
       case "openProfile":
+        return { route: { push: "me", params: {} }, state: { ...await loadProfile(s.me) } };
       case "tab": {
-        const tab = name === "openProfile" ? "profile" : value;
-        if (tab === "profile") return { state: { tab, ...await loadProfile(s.me) } };
+        const tab = value;
         if (tab === "people") {
           const people = await call("/people");
           return { state: { tab, people: people.items, results: void 0 } };
@@ -2113,7 +2336,7 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       }
       case "refresh": {
         const out = { ...await loadFeed(s), selected: s.selected };
-        if (s.tab === "profile") Object.assign(out, await loadProfile(s.me));
+        if (route && route.name === "me") Object.assign(out, await loadProfile(s.me));
         if (s.tab === "people") out.people = (await call("/people")).items;
         if (s.tab === "communities") out.communities = await call("/communities");
         await syncActivity().catch(() => 0);
@@ -2191,24 +2414,49 @@ async function screenEvent({ name, arg, value, state, route, device }) {
           ...toast(T.communityCreated)
         };
       }
+      case "openAttach":
+        return { state: {
+          picking: true,
+          pickQuery: "",
+          pickResults: null,
+          pickError: null,
+          pickRecent: await recentTitles(),
+          inputs: { titleSearch: "" }
+        }, focus: "titleSearch" };
+      case "searchTitles": {
+        const q = cleanQuery(value !== void 0 ? value : inputs.titleSearch);
+        if (!q) return { state: { pickQuery: "", pickResults: null, pickError: null } };
+        if (typeof kino.tmdb !== "function") return { state: { pickQuery: q, pickError: "noTmdb" } };
+        try {
+          return { state: { pickQuery: q, pickResults: await searchTitles(q), pickError: null } };
+        } catch (_) {
+          return { state: { pickQuery: q, pickResults: null, pickError: "failed" } };
+        }
+      }
+      case "attachTitle": {
+        const attach = pickAttachment(arg, s.pickResults, s.pickRecent);
+        if (!attach) return null;
+        return { state: { attach, ...closedPicker() }, focus: "postText" };
+      }
+      case "cancelAttach":
+        return { state: closedPicker(), focus: "openAttach" };
+      case "clearAttach":
+        return { state: { attach: null }, focus: "openAttach" };
       case "publish": {
-        const raw = String(s.inputs && s.inputs.postText || "").trim();
-        if (!raw) return null;
-        const text = await clean(raw);
-        const title = await titleHint(text);
-        const link = title ? null : await linkPreview(text);
+        const values = arguments[0] && arguments[0].values || inputs;
+        const raw = tidyLines(values.postText ?? inputs.postText);
+        const attach = s.attach || null;
+        if (!canPublish(raw, attach)) return toast(T.needTextOrTitle);
+        const text = raw ? await clean(raw) : "";
+        const linkTitle = text && !attach ? await titleHint(text) : null;
+        const link = linkTitle || !text || attach ? null : await linkPreview(text);
         const inCommunity = s.community && (route && route.name === "community" || s.view === "community");
-        const json = {
-          text,
-          ...title ? { title } : {},
-          ...link && link.title ? { link } : {},
-          ...inCommunity ? { communityId: Number(s.community.id) } : {}
-        };
+        const json = postBody({ text, linkTitle, link, attach, communityId: inCommunity ? s.community.id : null });
         const post2 = await callFresh("/posts", { method: "POST", json });
         const placed = inCommunity ? { cfeed: mergeById([post2, ...s.cfeed || []]).slice(0, MAX_FEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } } : { feed: mergeById([post2, ...s.feed || []]).slice(0, MAX_FEED), tab: "feed" };
         const warned = moderationDialog(post2);
         return {
-          state: { ...placed, ...moderationState(post2), inputs: { postText: "" } },
+          state: { ...placed, ...moderationState(post2), attach: null, ...closedPicker(), inputs: { postText: "", titleSearch: "" } },
           ui: [{ close: "composer" }],
           ...warned ? { dialog: warned } : toast(T.published)
         };
@@ -2221,12 +2469,10 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       case "openPost": {
         const thread = await loadThread(arg);
         if (device === "tv") return { state: { thread, selected: String(arg) }, focus: "commentText" };
-        return { state: { thread }, ui: [{ open: "thread" }] };
+        return { route: { push: "post", params: { id: String(arg) } }, state: { thread } };
       }
-      case "threadClosed":
-        return null;
       case "sendComment": {
-        const raw = String(inputs.commentText || "").trim();
+        const raw = tidyLines(inputs.commentText);
         if (!raw || !s.thread) return null;
         const text = await clean(raw);
         const c = await callFresh(`/posts/${s.thread.postId}/comments`, { method: "POST", json: { text } });
@@ -2254,11 +2500,12 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         if (s.user) out.user = { ...s.user, posts: (s.user.posts || []).filter(keep) };
         const wasOpen = s.thread && sameId(s.thread.postId, arg);
         if (wasOpen) out.thread = null;
-        return { state: out, ...wasOpen ? { ui: [{ close: "thread" }] } : {}, ...toast(T.deleted) };
+        const onItsPage = wasOpen && route && route.name === "post";
+        return { state: { ...out, ...onItsPage ? { view: "main" } : {} }, ...onItsPage ? { route: { pop: true } } : {}, ...toast(T.deleted) };
       }
       case "openUser":
-        if (s.me && sameId(arg, s.me.id)) return { state: { tab: "profile", ...await loadProfile(s.me) }, ui: [{ close: "thread" }] };
-        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) }, ui: [{ close: "thread" }] };
+        if (s.me && sameId(arg, s.me.id)) return { route: { push: "me", params: {} }, state: { ...await loadProfile(s.me) } };
+        return { route: { push: "user", params: { id: String(arg) } }, state: { user: await call("/users/" + arg) } };
       case "back": {
         const out = { view: "main" };
         if (s.feed === void 0) Object.assign(out, await loadFeed(s));
@@ -2311,17 +2558,17 @@ async function screenEvent({ name, arg, value, state, route, device }) {
 }
 
 // src/track.js
-var IMAGES2 = "https://image.tmdb.org/t/p/";
+var IMAGES3 = "https://image.tmdb.org/t/p/";
 async function pictures(kind, id, season, episode) {
   if (typeof kino.tmdb !== "function") return {};
   const out = {};
   try {
     const t = await kino.tmdb((kind === "movie" ? "/movie/" : "/tv/") + id, { language: "es" });
     if (t && t.adult) return null;
-    if (t && t.poster_path) out.poster = IMAGES2 + "w342" + t.poster_path;
+    if (t && t.poster_path) out.poster = IMAGES3 + "w342" + t.poster_path;
     if (kind === "series") {
       const e = await kino.tmdb(`/tv/${id}/season/${season}/episode/${episode}`, { language: "es" });
-      if (e && e.still_path) out.still = IMAGES2 + "w300" + e.still_path;
+      if (e && e.still_path) out.still = IMAGES3 + "w300" + e.still_path;
       if (e && typeof e.name === "string" && e.name.trim()) out.episodeTitle = e.name.trim().slice(0, 200);
     }
   } catch (_) {
@@ -2365,9 +2612,11 @@ async function screen({ state, route, device, size, lang }) {
   if (!s.me) return { type: "Column", padding: 48, crossAxisAlignment: "center", children: [{ type: "CircularProgressIndicator" }] };
   if (s.view === "welcome" || !s.me.handle) return welcomeView(s, ctx);
   const name = route && route.name;
-  if (name === "post" || s.view === "post") return postView(s, ctx);
-  if (name === "user" || s.view === "user") return userView(s, ctx);
-  if (name === "community" || s.view === "community") return communityView(s, ctx);
+  const page = ["me", "post", "user", "community"].includes(name) ? name : s.view;
+  if (page === "me") return meView(s, ctx);
+  if (page === "post") return postView(s, ctx);
+  if (page === "user") return userView(s, ctx);
+  if (page === "community") return communityView(s, ctx);
   return mainView(s, ctx);
 }
 async function job() {
