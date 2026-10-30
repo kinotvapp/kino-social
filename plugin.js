@@ -5,7 +5,6 @@ var label = (es, en) => ({ labelText: es, labelTextEn: en });
 var T = {
   // Communities
   communities: ["Comunidades", "Communities"],
-  hello: (me) => [me && me.name ? `Hola, ${String(me.name).split(" ")[0]}` : "Kino Social", me && me.name ? `Hi, ${String(me.name).split(" ")[0]}` : "Kino Social"],
   members: (n) => [n === 1 ? "1 miembro" : `${n} miembros`, n === 1 ? "1 member" : `${n} members`],
   join: ["Unirme", "Join"],
   joined: ["Te uniste", "Joined"],
@@ -1214,16 +1213,11 @@ function feedTab(s, ctx, src = generalSource(s)) {
   }
   return { type: "Row", flex: 1, gap: 24, padding: { x: 32, y: 16 }, children: [
     { type: "Column", flex: 7, gap: 12, children: [
-      { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-        ...src.canPost ? [Button(T.compose, { ui: [{ open: "composer" }] }, {
-          key: "tvCompose",
-          icon: "edit",
-          autofocus: true,
-          ...muted(s) ? { enabledAt: muted(s) } : {}
-        })] : [],
+      // Writing lives in the app bar, next to the reload button; here only what the person should know before reading.
+      ...src.canPost && muted(s) || src.key === "feed" && newerBanner(s) ? [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
         ...src.canPost && muted(s) ? [muteLine(muted(s))] : [],
         ...src.key === "feed" && newerBanner(s) ? [newerBanner(s)] : []
-      ] },
+      ] }] : [],
       { ...feedList(s, ctx, src), padding: 0 }
     ] },
     {
@@ -1501,8 +1495,10 @@ function mainView(s, ctx) {
   return {
     type: "Scaffold",
     every: { ms: 6e4, event: "tick" },
-    // The tabs get the whole width under the row with the greeting, the reload button and your avatar.
-    appBar: { type: "AppBar", title: T.hello(s.me)[0], titleEn: T.hello(s.me)[1], bottom: tabs, actions: [
+    // One row: the tabs where the greeting used to be, then (on the TV, in the feed) write, reload and your avatar. A phone
+    // writes from the prompt at the top of the feed.
+    appBar: { type: "AppBar", title: tabs, actions: [
+      ...isTv(ctx) && tab === "feed" && generalSource(s).canPost ? [IconBtn("edit", T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", ...muted(s) ? { enabledAt: muted(s) } : {} })] : [],
       IconBtn("refresh", T.refresh, { event: "refresh", timeoutMs: 2e4 }, { key: "refresh", loading: !!s.refreshing }),
       me
     ] },

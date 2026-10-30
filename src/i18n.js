@@ -8,7 +8,6 @@ export const label = (es, en) => ({ labelText: es, labelTextEn: en });
 export const T = {
   // Communities
   communities: ["Comunidades", "Communities"],
-  hello: (me) => [me && me.name ? `Hola, ${String(me.name).split(" ")[0]}` : "Kino Social", me && me.name ? `Hi, ${String(me.name).split(" ")[0]}` : "Kino Social"],
   members: (n) => [n === 1 ? "1 miembro" : `${n} miembros`, n === 1 ? "1 member" : `${n} members`],
   join: ["Unirme", "Join"],
   joined: ["Te uniste", "Joined"],
