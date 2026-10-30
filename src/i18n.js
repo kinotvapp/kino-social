@@ -146,7 +146,7 @@ export const T = {
   ok: ["Entendido", "OK"],
   // Kinos (Kino coins): one per tap for someone's post; earned by watching (1 every 10 minutes, at most 20 a day).
   giveCoin: ["Regalar un kino", "Give a Kino"],
-  coinShort: ["Kino", "Kino"],
+  coinShort: ["Kinos", "Kinos"],
   coinGiven: ["Le regalaste un kino", "You gave a Kino"],
   coinNoBalance: ["Aún no tienes kinos: ganas uno cada 10 minutos que ves", "You have no Kinos yet: you earn one every 10 minutes you watch"],
   coinSelf: ["No puedes regalarte kinos", "You can't give Kinos to yourself"],
