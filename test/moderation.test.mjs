@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { LIMIT, moderationDialog, moderationState, muteDialog, muteLine, mutedUntil } from "../src/moderation.js";
+import {
+  LIMIT,
+  moderationDialog,
+  moderationState,
+  moderationToast,
+  muteDialog,
+  muteLine,
+  mutedUntil,
+} from "../src/moderation.js";
 
 const UNTIL = 1_761_800_000_000;
 
@@ -52,4 +60,13 @@ test("the mute line under the locked composer: a prefix Kino completes with the 
   assert.equal(line.time, UNTIL);
   assert.equal(line.timeFormat, "clock");
   assert.equal(line.flex, 1);
+});
+
+test("moderationToast: one short line, no strike count, even when it starts a mute", () => {
+  assert.equal(moderationToast({}), null);
+  assert.equal(moderationToast(null), null);
+  assert.ok(moderationToast({ moderation: { strikes: 1, limit: 3 } })[0].length < 80);
+  assert.ok(!/1/.test(moderationToast({ moderation: { strikes: 1, limit: 3 } })[0])); // no strike number
+  assert.ok(moderationToast({ moderation: { mutedUntil: Date.now() + 1000 } })); // still something, not null
+  assert.ok(moderationToast({ moderation: { mutedUntil: Date.now() + 1000 } })[0].length < 80);
 });

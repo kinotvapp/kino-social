@@ -143,6 +143,9 @@ export const T = {
   // A prefix: Kino writes the time after it (Text time, timeFormat clock).
   mutedUntilDialog: ["No podrás publicar ni comentar hasta las ", "You won't be able to post or comment until "],
   mutedUntilLine: ["No puedes publicar ni comentar hasta las ", "You can't post or comment until "],
+  // The panel's toast (screen-kit: a plain line, no dialog): no numbers, the time is in the dialog and the locked line.
+  panelOffensiveToast: ["Tu texto tenía palabras ofensivas y se ocultó.", "Your text had offensive words and was hidden."],
+  panelMutedToast: ["Por palabras ofensivas no puedes publicar ni comentar por ahora.", "Because of offensive words you can't post or comment for now."],
   ok: ["Entendido", "OK"],
 };
 

@@ -46,6 +46,16 @@ export function moderationDialog(response) {
   return { body: es, bodyEn: en, buttons: [okButton()] };
 }
 
+/**
+ * The one plain line a screen-mode panel shows (its kit has no dialog): null when the answer earned no warning; else
+ * the offensive-words line, or the mute line when the warning started a mute.
+ */
+export function moderationToast(response) {
+  const m = response && response.moderation;
+  if (!m || typeof m !== "object") return null;
+  return mutedUntil(m.mutedUntil) ? T.panelMutedToast : T.panelOffensiveToast;
+}
+
 /** The state an answer with [response] leaves: the mute's end when it started one. */
 export function moderationState(response, now = Date.now()) {
   const m = response && response.moderation;
