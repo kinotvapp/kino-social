@@ -1,7 +1,7 @@
 {
   "id": "kino-social",
   "name": "Kino Social",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "apiVersion": 16,
   "entry": "plugin.js",
   "description": "Experimento: un feed para contar lo que ves, con comentarios, perfiles y personas a las que seguir",
@@ -84,6 +84,6 @@
   },
   "signature": {
     "authorKey": "82b87b938e0a95b142467c815a8823cb54310a13a828c3c4c77b1eda43294ae6",
-    "value": "6e5de99c4f251b686e6842daa069cb2f598384a8a1abe18c50f82764529abec20f598406425f678a2a4a253615be02918b50dab44c91691cadc3935c32488b08"
+    "value": "f3301ed7abd58e7cff92f43c1d4366fa4917f15a45ea4413c64a8daf5a7453fd8b38649d8b00c1844310c5dc59b4a624521328155e81c00ca19eab6cf161f807"
   }
 }

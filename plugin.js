@@ -904,6 +904,25 @@ function fromTmdb(r, kind) {
   if (typeof r.poster_path === "string" && /^\/[A-Za-z0-9._-]{1,200}$/.test(r.poster_path)) out.poster = IMAGES + r.poster_path;
   return out;
 }
+async function withPoster(title) {
+  if (!title || title.poster || typeof kino.tmdb !== "function") return title;
+  const base = (title.kind === "movie" ? "/movie/" : "/tv/") + title.tmdbId;
+  const valid = (p) => typeof p === "string" && /^\/[A-Za-z0-9._-]{1,200}$/.test(p) ? IMAGES + p : null;
+  try {
+    const d = await kino.tmdb(base, { language: "en" });
+    const found = valid(d && d.poster_path);
+    if (found) return { ...title, poster: found };
+  } catch (_) {
+  }
+  try {
+    const d = await kino.tmdb(base + "/images", {});
+    const list = d && Array.isArray(d.posters) ? d.posters : [];
+    const found = valid((list.find((p) => p && p.iso_639_1 === "es") || list[0] || {}).file_path);
+    if (found) return { ...title, poster: found };
+  } catch (_) {
+  }
+  return title;
+}
 var attachKey = (t) => t.kind + ":" + t.tmdbId;
 function dedupe(list, max) {
   const seen = /* @__PURE__ */ new Set();
@@ -1499,7 +1518,8 @@ function mainView(s, ctx) {
     // One row: the tabs where the greeting used to be, then (on the TV, in the feed) the red write button, reload and your
     // avatar. The bar's own buttons are plain icons, so the red one rides in the title next to them. A phone writes from the
     // prompt at the top of the feed.
-    appBar: { type: "AppBar", title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+    // Kino's bar pads 24 dp on the TV all round: a little less above and below, the sides as they were.
+    appBar: { type: "AppBar", ...isTv(ctx) ? { padding: { x: 24, y: 12 } } : {}, title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
       { ...tabs, flex: 1 },
       Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...muted(s) ? { enabledAt: muted(s) } : {} })
     ] } : tabs, actions: [
@@ -2721,7 +2741,7 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       case "publish": {
         const values = arguments[0] && arguments[0].values || inputs;
         const raw = tidyLines(values.postText ?? inputs.postText);
-        const attach = s.attach || null;
+        const attach = s.attach ? await withPoster(s.attach) : null;
         if (!canPublish(raw, attach)) return toast(T.needTextOrTitle);
         const text = raw ? await clean(raw) : "";
         const linkTitle = text && !attach ? await titleHint(text) : null;

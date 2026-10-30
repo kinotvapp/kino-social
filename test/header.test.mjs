@@ -50,3 +50,10 @@ test("TV: a muted person sees the button off until the mute ends; a phone keeps 
   const phone = mainView({ me: ME, tab: "feed", feed: [] }, { device: "phone" });
   assert.deepEqual(phone.appBar.actions.map((a) => a.key), ["refresh", "openProfile"]);
 });
+
+test("TV: the bar gives back some of Kino's 24 dp padding above and below (sides kept); a phone keeps Kino's own", () => {
+  const tv = mainView({ me: ME, tab: "feed", feed: [] }, { device: "tv" }).appBar;
+  assert.deepEqual(tv.padding, { x: 24, y: 12 });
+  const phone = mainView({ me: ME, tab: "feed", feed: [] }, { device: "phone" }).appBar;
+  assert.equal(phone.padding, undefined);
+});

@@ -72,3 +72,27 @@ test("nothing is posted without text or a title, and clearing drops the attachme
   assert.deepEqual((await screenEvent({ name: "clearAttach", state: { attach: DUNE } })).state, { attach: null });
   assert.equal(await screenEvent({ name: "attachTitle", arg: "movie:1", state: { pickResults: [DUNE] } }), null);
 });
+
+test("an attached title that came without a poster gets TMDB's English one (or the first of its image list) before posting", async () => {
+  const sent = [];
+  fakeKino(sent);
+  const asked = [];
+  const base = kino.tmdb;
+  kino.tmdb = async (path, opts) => {
+    asked.push([path, opts && opts.language]);
+    if (path === "/movie/76600") return opts && opts.language === "en" ? { poster_path: "/t6HIsrkSEQJAgiJO8aavRHFXgGM.jpg" } : { poster_path: null };
+    if (path === "/tv/1396/images") return { posters: [{ iso_639_1: "en", file_path: "/en.jpg" }, { iso_639_1: "es", file_path: "/es.jpg" }] };
+    return base(path, opts);
+  };
+  const avatar = { kind: "movie", tmdbId: 76600, title: "Avatar 2: El camino del agua", year: 2022 };
+  await screenEvent({ name: "publish", state: { attach: avatar, feed: [], inputs: { postText: "" } } });
+  assert.equal(sent.at(-1).json.title.poster, "https://image.tmdb.org/t/p/w342/t6HIsrkSEQJAgiJO8aavRHFXgGM.jpg");
+  const show = { kind: "series", tmdbId: 1396, title: "Breaking Bad" };
+  await screenEvent({ name: "publish", state: { attach: show, feed: [], inputs: { postText: "" } } });
+  assert.equal(sent.at(-1).json.title.poster, "https://image.tmdb.org/t/p/w342/es.jpg");
+  const had = { ...DUNE };
+  asked.length = 0;
+  await screenEvent({ name: "publish", state: { attach: had, feed: [], inputs: { postText: "" } } });
+  assert.equal(asked.length, 0, "a title with a poster asks TMDB nothing more");
+  assert.equal(sent.at(-1).json.title.poster, DUNE.poster);
+});

@@ -9,7 +9,7 @@ import { moderationDialog, moderationState, muteDialog, mutedUntil } from "./mod
 import { linkPreview } from "./linkpreview.js";
 import { titleHint } from "./titlelink.js";
 import { tidyLines } from "./lines.js";
-import { canPublish, cleanQuery, pickAttachment, postBody, recentTitles, searchTitles } from "./attach.js";
+import { canPublish, cleanQuery, pickAttachment, postBody, recentTitles, searchTitles, withPoster } from "./attach.js";
 import { coinRefusal, coinsReady, coinsSwitchedOff, knownTotals, loadCoins, rememberTotal } from "./coins.js";
 
 const MAX_FEED = 80;
@@ -295,7 +295,7 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "publish": {
         const values = (arguments[0] && arguments[0].values) || inputs;
         const raw = tidyLines(values.postText ?? inputs.postText);
-        const attach = s.attach || null;
+        const attach = s.attach ? await withPoster(s.attach) : null;
         if (!canPublish(raw, attach)) return toast(T.needTextOrTitle);
         const text = raw ? await clean(raw) : "";
         // The device reads the link (the server never fetches): a TMDB or IMDb title from Kino's TMDB, else the page's head.

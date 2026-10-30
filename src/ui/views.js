@@ -397,7 +397,8 @@ export function mainView(s, ctx) {
     // One row: the tabs where the greeting used to be, then (on the TV, in the feed) the red write button, reload and your
     // avatar. The bar's own buttons are plain icons, so the red one rides in the title next to them. A phone writes from the
     // prompt at the top of the feed.
-    appBar: { type: "AppBar", title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+    // Kino's bar pads 24 dp on the TV all round: a little less above and below, the sides as they were.
+    appBar: { type: "AppBar", ...(isTv(ctx) ? { padding: { x: 24, y: 12 } } : {}), title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
       { ...tabs, flex: 1 },
       Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...(muted(s) ? { enabledAt: muted(s) } : {}) }),
     ] } : tabs, actions: [

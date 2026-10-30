@@ -33,6 +33,32 @@ export function fromTmdb(r, kind) {
   return out;
 }
 
+/**
+ * [title] with a poster: TMDB answers the Spanish details without one for some titles, so when the attachment came without,
+ * the title's own details in English, then its image list, are asked. Never throws; the title as it was when none is found.
+ */
+export async function withPoster(title) {
+  if (!title || title.poster || typeof kino.tmdb !== "function") return title;
+  const base = (title.kind === "movie" ? "/movie/" : "/tv/") + title.tmdbId;
+  const valid = (p) => (typeof p === "string" && /^\/[A-Za-z0-9._-]{1,200}$/.test(p) ? IMAGES + p : null);
+  try {
+    const d = await kino.tmdb(base, { language: "en" });
+    const found = valid(d && d.poster_path);
+    if (found) return { ...title, poster: found };
+  } catch (_) {
+    // the image list is tried next
+  }
+  try {
+    const d = await kino.tmdb(base + "/images", {});
+    const list = d && Array.isArray(d.posters) ? d.posters : [];
+    const found = valid((list.find((p) => p && p.iso_639_1 === "es") || list[0] || {}).file_path);
+    if (found) return { ...title, poster: found };
+  } catch (_) {
+    // posted without a poster, as before
+  }
+  return title;
+}
+
 export const attachKey = (t) => t.kind + ":" + t.tmdbId;
 
 function dedupe(list, max) {
