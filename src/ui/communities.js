@@ -2,7 +2,7 @@
 // own page: its header (what it is, how many, join or leave) over its feed, the same feed list as the general one.
 
 import { T } from "../i18n.js";
-import { Avatar, Button, IconBtn, Raw, Txt, count, isTv, pagePadding } from "./kit.js";
+import { Avatar, Button, IconBtn, Raw, Txt, barPadding, count, isTv, pagePadding } from "./kit.js";
 import { feedTab } from "./views.js";
 
 const membersLine = (c) => T.members(c.members);
@@ -138,7 +138,7 @@ function requestsSheet(s) {
 export function communityView(s, ctx) {
   const c = s.community;
   return { type: "Scaffold",
-    appBar: { type: "AppBar", title: c ? c.name : T.communities[0], titleEn: c ? c.name : T.communities[1], leading: IconBtn("arrow_back", T.back, "back") },
+    appBar: { type: "AppBar", ...barPadding(ctx), title: c ? c.name : T.communities[0], titleEn: c ? c.name : T.communities[1], leading: IconBtn("arrow_back", T.back, "back") },
     body: c ? { type: "Column", flex: 1, children: [feedTab(s, ctx, communitySource(s, ctx)), requestsSheet(s)] }
       : { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] } };
 }

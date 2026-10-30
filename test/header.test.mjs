@@ -57,3 +57,23 @@ test("TV: the bar gives back some of Kino's 24 dp padding above and below (sides
   const phone = mainView({ me: ME, tab: "feed", feed: [] }, { device: "phone" }).appBar;
   assert.equal(phone.padding, undefined);
 });
+
+test("TV profile: the bars of the pages with a back arrow share the home bar's padding; Edit profile sits beside the avatar, not under the numbers", async () => {
+  const { meView, userView, postView } = await import("../src/ui/views.js");
+  const tv = { device: "tv" };
+  const own = { me: ME, profile: { user: { id: 1, name: "Kino", handle: "lordmacu" }, postCount: 3, followers: 4, followingCount: 1, posts: [], activity: [] }, myActivity: [] };
+  const view = meView(own, tv);
+  assert.deepEqual(view.appBar.padding, { x: 24, y: 12 });
+  const head = find(view.body, (n) => n.key === "head-1")[0];
+  const [identity, ...rest] = head.children;
+  assert.ok(find(identity, (n) => n.key === "editProfileBtn").length === 1, "in the avatar row");
+  assert.equal(identity.children.at(-1).key, "editProfileBtn", "to the right of the name and the @user");
+  assert.ok(!rest.some((r) => find(r, (n) => n.key === "editProfileBtn").length), "not again below");
+  assert.deepEqual(userView({ me: ME, user: { user: { id: 2, name: "Ana" }, postCount: 0, followers: 0, followingCount: 0, posts: [], activity: [] } }, tv).appBar.padding, { x: 24, y: 12 });
+  assert.deepEqual(postView({ me: ME }, tv).appBar.padding, { x: 24, y: 12 });
+  const phone = meView(own, { device: "phone" });
+  assert.equal(phone.appBar.padding, undefined);
+  const phoneHead = find(phone.body, (n) => n.key === "head-1")[0];
+  assert.equal(find(phoneHead.children[0], (n) => n.key === "editProfileBtn").length, 0, "a phone keeps it under the numbers");
+  assert.equal(find(phoneHead, (n) => n.key === "editProfileBtn").length, 1);
+});

@@ -13,13 +13,14 @@ const readKept = () => {
   try { const o = JSON.parse(kino.storage.get(KEY) || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; } catch (_) { return {}; }
 };
 
-/** Every post of [json] (a page's items, a post, a thread's post) whose card has a TMDB title and no picture. */
+/** Every post of [json] (a page's items, a profile's posts, a post, a thread's post) whose card has a TMDB title and no picture. */
 function bare(json) {
   const out = [];
   const visit = (o) => {
     if (!o || typeof o !== "object") return;
     if (o.link && o.link.tmdb && o.link.title && !o.link.image) out.push(o);
     if (Array.isArray(o.items)) o.items.forEach(visit);
+    if (Array.isArray(o.posts)) o.posts.forEach(visit); // a profile's own posts
     if (o.post) visit(o.post);
   };
   visit(json);

@@ -2,6 +2,9 @@
 
 export const isTv = (ctx) => ctx.device === "tv";
 
+/** Kino's app bar pads 24 dp on the TV all round: a little less above and below, the sides as they were. */
+export const barPadding = (ctx) => (isTv(ctx) ? { padding: { x: 24, y: 12 } } : {});
+
 export const Txt = ([es, en], props = {}) => ({ type: "Text", text: es, textEn: en, ...props });
 /** A text the person wrote: the same in both languages. */
 export const Raw = (text, props = {}) => ({ type: "Text", text, textEn: text, ...props });

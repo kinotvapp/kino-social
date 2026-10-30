@@ -38,3 +38,15 @@ test("no TMDB, or a TMDB that fails: the cards stay as the server sent them and 
   globalThis.kino.tmdb = async () => { throw new Error("offline"); };
   assert.equal((await call("/feed")).items[0].link.image, undefined);
 });
+
+test("the posts of a profile (its own feed of posts) get their posters too", async () => {
+  const asked = [];
+  const store = new Map([["session", "s1"]]);
+  globalThis.kino = {
+    storage: { get: (k) => store.get(k) ?? null, set: (k, v) => store.set(k, v), remove: (k) => store.delete(k) },
+    tmdb: async (path, opts) => { asked.push(path); return opts && opts.language === "en" ? { poster_path: "/p.jpg" } : { poster_path: null }; },
+    fetch: async () => ({ status: 200, ok: true, headers: {}, json: () => ({ user: { id: 10 }, posts: [bare(1, { tmdb: { kind: "movie", id: 603 } })], activity: [] }) }),
+  };
+  const profile = await call("/users/10");
+  assert.equal(profile.posts[0].link.image, "https://image.tmdb.org/t/p/w342/p.jpg");
+});

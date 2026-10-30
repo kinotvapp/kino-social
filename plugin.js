@@ -417,6 +417,7 @@ function bare(json) {
     if (!o || typeof o !== "object") return;
     if (o.link && o.link.tmdb && o.link.title && !o.link.image) out.push(o);
     if (Array.isArray(o.items)) o.items.forEach(visit);
+    if (Array.isArray(o.posts)) o.posts.forEach(visit);
     if (o.post) visit(o.post);
   };
   visit(json);
@@ -665,6 +666,7 @@ async function postNotices() {
 
 // src/ui/kit.js
 var isTv = (ctx) => ctx.device === "tv";
+var barPadding = (ctx) => isTv(ctx) ? { padding: { x: 24, y: 12 } } : {};
 var Txt = ([es, en], props = {}) => ({ type: "Text", text: es, textEn: en, ...props });
 var Raw = (text, props = {}) => ({ type: "Text", text, textEn: text, ...props });
 var AVATAR_COLORS = ["primaryContainer", "secondary", "primary"];
@@ -1308,6 +1310,7 @@ function feedTab(s, ctx, src = generalSource(s)) {
   ] };
 }
 var isCreator = (plugins) => (plugins || []).some((pl) => !pl.hidden);
+var editProfileButton = () => Button(T.editProfile, { ui: [{ open: "editProfile" }] }, { key: "editProfileBtn", icon: "edit", variant: "secondary", type: "Button" });
 function profileHeader(p, own, ctx, plugins) {
   const u = p.user;
   const stat = (n, [es, en]) => ({ type: "Column", flex: 1, crossAxisAlignment: "center", children: [Raw(String(n), { style: "h4", bold: true }), Txt([es, en], { style: "caption", color: "muted" })] });
@@ -1326,7 +1329,9 @@ function profileHeader(p, own, ctx, plugins) {
             ...isCreator(plugins) ? [Tag(T.creatorTag, "bolt", { key: "creatorTag" })] : []
           ] },
           ...u.handle ? [Raw("@" + u.handle, { color: "muted" })] : []
-        ] }
+        ] },
+        // On the TV the free room to the right of the name holds the button; a phone keeps it under the numbers.
+        ...own && isTv(ctx) ? [editProfileButton()] : []
       ] },
       ...u.bio ? [Raw(u.bio)] : [],
       { type: "Row", gap: 8, children: [
@@ -1334,7 +1339,7 @@ function profileHeader(p, own, ctx, plugins) {
         stat(p.followers || 0, T.followers),
         stat(p.followingCount || 0, T.followingCount)
       ] },
-      own ? { type: "Row", gap: 8, children: [Button(T.editProfile, { ui: [{ open: "editProfile" }] }, { key: "editProfileBtn", icon: "edit", variant: "secondary", type: "Button" })] } : { type: "Row", children: [p.following ? { type: "Button", variant: "secondary", key: "unfollow-" + u.id, icon: "check", labelText: T.following[0], labelTextEn: T.following[1], selected: true, onPressed: { event: "unfollow", arg: String(u.id) } } : Button(T.follow, { event: "follow", arg: String(u.id) }, { key: "follow-" + u.id, icon: "add" })] }
+      ...own ? isTv(ctx) ? [] : [{ type: "Row", gap: 8, children: [editProfileButton()] }] : [{ type: "Row", children: [p.following ? { type: "Button", variant: "secondary", key: "unfollow-" + u.id, icon: "check", labelText: T.following[0], labelTextEn: T.following[1], selected: true, onPressed: { event: "unfollow", arg: String(u.id) } } : Button(T.follow, { event: "follow", arg: String(u.id) }, { key: "follow-" + u.id, icon: "add" })] }]
     ]
   };
 }
@@ -1574,8 +1579,7 @@ function mainView(s, ctx) {
     // One row: the tabs where the greeting used to be, then (on the TV, in the feed) the red write button, reload and your
     // avatar. The bar's own buttons are plain icons, so the red one rides in the title next to them. A phone writes from the
     // prompt at the top of the feed.
-    // Kino's bar pads 24 dp on the TV all round: a little less above and below, the sides as they were.
-    appBar: { type: "AppBar", ...isTv(ctx) ? { padding: { x: 24, y: 12 } } : {}, title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+    appBar: { type: "AppBar", ...barPadding(ctx), title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
       { ...tabs, flex: 1 },
       Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...muted(s) ? { enabledAt: muted(s) } : {} })
     ] } : tabs, actions: [
@@ -1588,13 +1592,14 @@ function mainView(s, ctx) {
 function meView(s, ctx) {
   return { type: "Scaffold", appBar: {
     type: "AppBar",
+    ...barPadding(ctx),
     title: T.profile[0],
     titleEn: T.profile[1],
     leading: IconBtn("arrow_back", T.back, "back")
   }, body: profileTab(s, ctx) };
 }
 function postView(s, ctx) {
-  const appBar = { type: "AppBar", title: T.post[0], titleEn: T.post[1], leading: IconBtn("arrow_back", T.back, "back") };
+  const appBar = { type: "AppBar", ...barPadding(ctx), title: T.post[0], titleEn: T.post[1], leading: IconBtn("arrow_back", T.back, "back") };
   if (!s.thread || !s.thread.post) return { type: "Scaffold", appBar, body: { type: "Column", padding: pagePadding, children: threadBody(s, ctx) } };
   return { type: "Scaffold", appBar, body: { type: "Column", flex: 1, children: [
     { type: "ListView", key: "threadList", flex: 1, gap: 12, padding: pagePadding, stickToBottom: true, newItemsHint: true, items: threadItems(s, ctx) },
@@ -1613,6 +1618,7 @@ function userView(s, ctx) {
   ] }] };
   return { type: "Scaffold", appBar: {
     type: "AppBar",
+    ...barPadding(ctx),
     title: p ? p.user.name : T.profile[0],
     titleEn: p ? p.user.name : T.profile[1],
     leading: IconBtn("arrow_back", T.back, "back")
@@ -1894,7 +1900,7 @@ function communityView(s, ctx) {
   const c = s.community;
   return {
     type: "Scaffold",
-    appBar: { type: "AppBar", title: c ? c.name : T.communities[0], titleEn: c ? c.name : T.communities[1], leading: IconBtn("arrow_back", T.back, "back") },
+    appBar: { type: "AppBar", ...barPadding(ctx), title: c ? c.name : T.communities[0], titleEn: c ? c.name : T.communities[1], leading: IconBtn("arrow_back", T.back, "back") },
     body: c ? { type: "Column", flex: 1, children: [feedTab(s, ctx, communitySource(s, ctx)), requestsSheet(s)] } : { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] }
   };
 }
