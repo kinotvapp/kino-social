@@ -389,16 +389,18 @@ export function mainView(s, ctx) {
   // Your profile, top right (as in most social apps), opens its own page; its badge says what is new for you.
   const me = IconBtn("person", T.profile, "openProfile", { key: "openProfile",
     ...(unread ? { badge: { text: String(Math.min(unread, 99)) } } : {}) });
+  const writeInBar = isTv(ctx) && tab === "feed" && generalSource(s).canPost;
   const body = tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
   return {
     type: "Scaffold",
     every: { ms: 60000, event: "tick" },
-    // One row: the tabs where the greeting used to be, then (on the TV, in the feed) write, reload and your avatar. A phone
-    // writes from the prompt at the top of the feed.
-    appBar: { type: "AppBar", title: tabs, actions: [
-      ...(isTv(ctx) && tab === "feed" && generalSource(s).canPost
-        ? [IconBtn("edit", T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", ...(muted(s) ? { enabledAt: muted(s) } : {}) })]
-        : []),
+    // One row: the tabs where the greeting used to be, then (on the TV, in the feed) the red write button, reload and your
+    // avatar. The bar's own buttons are plain icons, so the red one rides in the title next to them. A phone writes from the
+    // prompt at the top of the feed.
+    appBar: { type: "AppBar", title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      { ...tabs, flex: 1 },
+      Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...(muted(s) ? { enabledAt: muted(s) } : {}) }),
+    ] } : tabs, actions: [
       IconBtn("refresh", T.refresh, { event: "refresh", timeoutMs: 20000 }, { key: "refresh", loading: !!s.refreshing }),
       me,
     ] },
