@@ -277,6 +277,182 @@ async function balanceNotice(now = Date.now()) {
   return true;
 }
 
+// src/attach.js
+var IMAGES = "https://image.tmdb.org/t/p/w342";
+var MAX_RESULTS = 10;
+var MAX_RECENT = 8;
+var MIN_QUERY = 2;
+var MAX_QUERY = 80;
+var yearOf = (date) => {
+  const y = Number(String(date || "").slice(0, 4));
+  return Number.isInteger(y) && y > 1870 && y < 2100 ? y : void 0;
+};
+function fromTmdb(r, kind) {
+  if (!r || typeof r !== "object" || r.adult === true) return null;
+  const k = r.media_type === "movie" ? "movie" : r.media_type === "tv" ? "series" : r.media_type ? null : kind;
+  if (k !== "movie" && k !== "series") return null;
+  const id = r.id;
+  if (!Number.isInteger(id) || id <= 0 || id >= 1e9) return null;
+  const title = String((k === "movie" ? r.title || r.original_title : r.name || r.original_name) || "").trim();
+  if (!title) return null;
+  const out = { kind: k, tmdbId: id, title: title.slice(0, 120) };
+  const year = yearOf(k === "movie" ? r.release_date : r.first_air_date);
+  if (year) out.year = year;
+  if (typeof r.poster_path === "string" && /^\/[A-Za-z0-9._-]{1,200}$/.test(r.poster_path)) out.poster = IMAGES + r.poster_path;
+  return out;
+}
+async function withPoster(title) {
+  if (!title || title.poster || typeof kino.tmdb !== "function") return title;
+  const base = (title.kind === "movie" ? "/movie/" : "/tv/") + title.tmdbId;
+  const valid = (p) => typeof p === "string" && /^\/[A-Za-z0-9._-]{1,200}$/.test(p) ? IMAGES + p : null;
+  try {
+    const d = await kino.tmdb(base, { language: "en" });
+    const found = valid(d && d.poster_path);
+    if (found) return { ...title, poster: found };
+  } catch (_) {
+  }
+  try {
+    const d = await kino.tmdb(base + "/images", {});
+    const list = d && Array.isArray(d.posters) ? d.posters : [];
+    const found = valid((list.find((p) => p && p.iso_639_1 === "es") || list[0] || {}).file_path);
+    if (found) return { ...title, poster: found };
+  } catch (_) {
+  }
+  return title;
+}
+var attachKey = (t) => t.kind + ":" + t.tmdbId;
+function dedupe(list, max) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const t of list) {
+    if (!t || seen.has(attachKey(t))) continue;
+    seen.add(attachKey(t));
+    out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+function searchResults(json, kind) {
+  const results = json && Array.isArray(json.results) ? json.results : [];
+  return dedupe(results.map((r) => fromTmdb(r, kind)), MAX_RESULTS);
+}
+function recentFromLibrary(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  return dedupe(list.map((e) => {
+    const id = Number(e && e.ids && e.ids.tmdb);
+    if (!e || e.kind !== "movie" && e.kind !== "series" || !Number.isInteger(id) || id <= 0 || id >= 1e9) return null;
+    return { kind: e.kind, tmdbId: id };
+  }), MAX_RECENT);
+}
+function validAttachment(a) {
+  return !!a && (a.kind === "movie" || a.kind === "series") && Number.isInteger(a.tmdbId) && a.tmdbId > 0 && a.tmdbId < 1e9 && typeof a.title === "string" && a.title.trim().length > 0;
+}
+function pickAttachment(key, ...lists) {
+  for (const list of lists) {
+    const hit = (list || []).find((t) => t && attachKey(t) === String(key));
+    if (hit && validAttachment(hit)) return hit;
+  }
+  return null;
+}
+var canPublish = (text, attach) => String(text || "").trim().length > 0 || validAttachment(attach);
+function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null, season = null, episode = null }) {
+  const picked = validAttachment(attach) ? attach : null;
+  let title = picked || linkTitle;
+  if (title && title.kind === "series" && Number.isInteger(season) && season > 0 && Number.isInteger(episode) && episode > 0) {
+    title = { ...title, season, episode };
+  }
+  return {
+    text,
+    ...title ? { title } : {},
+    ...!picked && !linkTitle && link && link.title ? { link } : {},
+    ...communityId ? { communityId: Number(communityId) } : {}
+  };
+}
+function cleanQuery(value) {
+  const q = String(value || "").replace(/\s+/g, " ").trim().slice(0, MAX_QUERY);
+  return q.length >= MIN_QUERY ? q : "";
+}
+async function searchTitles(q) {
+  if (typeof kino.tmdb !== "function") return [];
+  const json = await kino.tmdb("/search/multi", { query: q, include_adult: false, language: "es", page: 1 });
+  return searchResults(json);
+}
+async function recentTitles() {
+  if (typeof kino.library !== "object" || !kino.library || typeof kino.tmdb !== "function") return [];
+  let entries;
+  try {
+    entries = await kino.library.watched({ limit: 30 });
+  } catch (_) {
+    return [];
+  }
+  const out = [];
+  for (const r of recentFromLibrary(entries)) {
+    try {
+      const d = await kino.tmdb((r.kind === "movie" ? "/movie/" : "/tv/") + r.tmdbId, { language: "es" });
+      const t = fromTmdb(d && { ...d, id: r.tmdbId }, r.kind);
+      if (t) out.push(t);
+    } catch (_) {
+    }
+  }
+  return out;
+}
+
+// src/posters.js
+var KEY = "tmdbPosters";
+var TTL_MS = 30 * 24 * 36e5;
+var MAX_LOOKUPS = 6;
+var MAX_KEPT = 200;
+var missed = /* @__PURE__ */ new Set();
+var readKept = () => {
+  try {
+    const o = JSON.parse(kino.storage.get(KEY) || "{}");
+    return o && typeof o === "object" && !Array.isArray(o) ? o : {};
+  } catch (_) {
+    return {};
+  }
+};
+function bare(json) {
+  const out = [];
+  const visit = (o) => {
+    if (!o || typeof o !== "object") return;
+    if (o.link && o.link.tmdb && o.link.title && !o.link.image) out.push(o);
+    if (Array.isArray(o.items)) o.items.forEach(visit);
+    if (o.post) visit(o.post);
+  };
+  visit(json);
+  return out;
+}
+async function fillPosters(json) {
+  try {
+    const posts = bare(json);
+    if (!posts.length || typeof kino.tmdb !== "function") return json;
+    const kept = readKept();
+    let lookups = 0;
+    let changed = false;
+    for (const post2 of posts) {
+      const { kind, id } = post2.link.tmdb;
+      const k = kind + ":" + id;
+      let poster = kept[k] && kept[k].poster;
+      if (!poster && !missed.has(k) && lookups < MAX_LOOKUPS) {
+        lookups++;
+        const found = await withPoster({ kind, tmdbId: id, title: post2.link.title });
+        if (found && found.poster) {
+          poster = found.poster;
+          kept[k] = { poster, at: Date.now() };
+          changed = true;
+        } else missed.add(k);
+      }
+      if (poster) post2.link.image = poster;
+    }
+    if (changed) {
+      const fresh = Object.entries(kept).filter(([, v]) => v && Date.now() - v.at < TTL_MS).slice(-MAX_KEPT);
+      kino.storage.set(KEY, JSON.stringify(Object.fromEntries(fresh)));
+    }
+  } catch (_) {
+  }
+  return json;
+}
+
 // src/api.js
 var BASE = "https://129-158-250-81.sslip.io";
 var SESSION_KEY = "session";
@@ -359,7 +535,7 @@ async function call(path, { method = "GET", json, etag } = {}) {
   if (r.status === 409) throw new ApiError(body.error || "conflict", 409);
   if (r.status === 400) throw new ApiError(body.error || "bad_request", 400);
   if (!r.ok) throw new ApiError("offline", r.status);
-  return { ...body, etag: r.headers.etag };
+  return { ...await fillPosters(body), etag: r.headers.etag };
 }
 async function callFresh(path, options) {
   try {
@@ -878,126 +1054,6 @@ function commentRow(c, me) {
     crossAxisAlignment: "start",
     children: mine ? [room, bubble] : [{ type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] }, bubble, room]
   };
-}
-
-// src/attach.js
-var IMAGES = "https://image.tmdb.org/t/p/w342";
-var MAX_RESULTS = 10;
-var MAX_RECENT = 8;
-var MIN_QUERY = 2;
-var MAX_QUERY = 80;
-var yearOf = (date) => {
-  const y = Number(String(date || "").slice(0, 4));
-  return Number.isInteger(y) && y > 1870 && y < 2100 ? y : void 0;
-};
-function fromTmdb(r, kind) {
-  if (!r || typeof r !== "object" || r.adult === true) return null;
-  const k = r.media_type === "movie" ? "movie" : r.media_type === "tv" ? "series" : r.media_type ? null : kind;
-  if (k !== "movie" && k !== "series") return null;
-  const id = r.id;
-  if (!Number.isInteger(id) || id <= 0 || id >= 1e9) return null;
-  const title = String((k === "movie" ? r.title || r.original_title : r.name || r.original_name) || "").trim();
-  if (!title) return null;
-  const out = { kind: k, tmdbId: id, title: title.slice(0, 120) };
-  const year = yearOf(k === "movie" ? r.release_date : r.first_air_date);
-  if (year) out.year = year;
-  if (typeof r.poster_path === "string" && /^\/[A-Za-z0-9._-]{1,200}$/.test(r.poster_path)) out.poster = IMAGES + r.poster_path;
-  return out;
-}
-async function withPoster(title) {
-  if (!title || title.poster || typeof kino.tmdb !== "function") return title;
-  const base = (title.kind === "movie" ? "/movie/" : "/tv/") + title.tmdbId;
-  const valid = (p) => typeof p === "string" && /^\/[A-Za-z0-9._-]{1,200}$/.test(p) ? IMAGES + p : null;
-  try {
-    const d = await kino.tmdb(base, { language: "en" });
-    const found = valid(d && d.poster_path);
-    if (found) return { ...title, poster: found };
-  } catch (_) {
-  }
-  try {
-    const d = await kino.tmdb(base + "/images", {});
-    const list = d && Array.isArray(d.posters) ? d.posters : [];
-    const found = valid((list.find((p) => p && p.iso_639_1 === "es") || list[0] || {}).file_path);
-    if (found) return { ...title, poster: found };
-  } catch (_) {
-  }
-  return title;
-}
-var attachKey = (t) => t.kind + ":" + t.tmdbId;
-function dedupe(list, max) {
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (const t of list) {
-    if (!t || seen.has(attachKey(t))) continue;
-    seen.add(attachKey(t));
-    out.push(t);
-    if (out.length >= max) break;
-  }
-  return out;
-}
-function searchResults(json, kind) {
-  const results = json && Array.isArray(json.results) ? json.results : [];
-  return dedupe(results.map((r) => fromTmdb(r, kind)), MAX_RESULTS);
-}
-function recentFromLibrary(entries) {
-  const list = Array.isArray(entries) ? entries : [];
-  return dedupe(list.map((e) => {
-    const id = Number(e && e.ids && e.ids.tmdb);
-    if (!e || e.kind !== "movie" && e.kind !== "series" || !Number.isInteger(id) || id <= 0 || id >= 1e9) return null;
-    return { kind: e.kind, tmdbId: id };
-  }), MAX_RECENT);
-}
-function validAttachment(a) {
-  return !!a && (a.kind === "movie" || a.kind === "series") && Number.isInteger(a.tmdbId) && a.tmdbId > 0 && a.tmdbId < 1e9 && typeof a.title === "string" && a.title.trim().length > 0;
-}
-function pickAttachment(key, ...lists) {
-  for (const list of lists) {
-    const hit = (list || []).find((t) => t && attachKey(t) === String(key));
-    if (hit && validAttachment(hit)) return hit;
-  }
-  return null;
-}
-var canPublish = (text, attach) => String(text || "").trim().length > 0 || validAttachment(attach);
-function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null, season = null, episode = null }) {
-  const picked = validAttachment(attach) ? attach : null;
-  let title = picked || linkTitle;
-  if (title && title.kind === "series" && Number.isInteger(season) && season > 0 && Number.isInteger(episode) && episode > 0) {
-    title = { ...title, season, episode };
-  }
-  return {
-    text,
-    ...title ? { title } : {},
-    ...!picked && !linkTitle && link && link.title ? { link } : {},
-    ...communityId ? { communityId: Number(communityId) } : {}
-  };
-}
-function cleanQuery(value) {
-  const q = String(value || "").replace(/\s+/g, " ").trim().slice(0, MAX_QUERY);
-  return q.length >= MIN_QUERY ? q : "";
-}
-async function searchTitles(q) {
-  if (typeof kino.tmdb !== "function") return [];
-  const json = await kino.tmdb("/search/multi", { query: q, include_adult: false, language: "es", page: 1 });
-  return searchResults(json);
-}
-async function recentTitles() {
-  if (typeof kino.library !== "object" || !kino.library || typeof kino.tmdb !== "function") return [];
-  let entries;
-  try {
-    entries = await kino.library.watched({ limit: 30 });
-  } catch (_) {
-    return [];
-  }
-  const out = [];
-  for (const r of recentFromLibrary(entries)) {
-    try {
-      const d = await kino.tmdb((r.kind === "movie" ? "/movie/" : "/tv/") + r.tmdbId, { language: "es" });
-      const t = fromTmdb(d && { ...d, id: r.tmdbId }, r.kind);
-      if (t) out.push(t);
-    } catch (_) {
-    }
-  }
-  return out;
 }
 
 // src/ui/views.js

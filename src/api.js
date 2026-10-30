@@ -1,4 +1,5 @@
 // The Kino Social server: one host, JSON, a bearer session kept in kino.storage.
+import { fillPosters } from "./posters.js";
 
 export const BASE = "https://129-158-250-81.sslip.io";
 const SESSION_KEY = "session";
@@ -85,7 +86,7 @@ export async function call(path, { method = "GET", json, etag } = {}) {
   if (r.status === 409) throw new ApiError(body.error || "conflict", 409);
   if (r.status === 400) throw new ApiError(body.error || "bad_request", 400);
   if (!r.ok) throw new ApiError("offline", r.status);
-  return { ...body, etag: r.headers.etag };
+  return { ...(await fillPosters(body)), etag: r.headers.etag };
 }
 
 /** `call`, logging in again once when the session is gone (person-started calls only). */
