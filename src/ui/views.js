@@ -294,12 +294,31 @@ function watchedLine(a, lang) {
   return parts.join(" · ");
 }
 
+/** Your Kino coins and today's progress (1 every 10 minutes watched, up to the day's cap); nothing when unavailable. */
+function coinsCard(coins) {
+  if (!coins) return null;
+  const cap = coins.capToday || 0;
+  return { type: "Card", key: "coinsCard", padding: 16, gap: 8, children: [
+    { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      { type: "Icon", name: "star", color: "primary" },
+      { type: "Column", flex: 1, gap: 0, children: [
+        Txt(T.coinTitle, { style: "caption", color: "muted" }),
+        Txt(T.coinBalance(coins.balance), { style: "h4", bold: true }),
+      ] },
+    ] },
+    ...(cap ? [{ type: "LinearProgressIndicator", value: Math.min(1, (coins.earnedToday || 0) / cap),
+      labelText: T.coinToday(coins.earnedToday || 0, cap)[0], labelTextEn: T.coinToday(coins.earnedToday || 0, cap)[1] }] : []),
+    Txt(T.coinHint, { style: "caption", color: "muted" }),
+  ] };
+}
+
 function profileTab(s, ctx) {
   const p = s.profile;
   if (!p) return { type: "Column", padding: pagePadding, gap: 12, children: skeletonFeed().slice(0, 1) };
   const mine = s.myActivity || [];
   return { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
     profileHeader(p, true, ctx, s.myPlugins),
+    ...(ctx.coins && s.coins ? [coinsCard(s.coins)] : []),
     { type: "Card", key: "shareCard", padding: 16, gap: 4, children: [
       { type: "Switch", key: "share", value: !!s.me.shareActivity, labelText: T.share[0], labelTextEn: T.share[1], onChanged: "toggleShare" },
       Txt(T.shareHint, { style: "caption", color: "muted" }),

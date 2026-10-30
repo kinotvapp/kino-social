@@ -1,8 +1,8 @@
 {
   "id": "kino-social",
   "name": "Kino Social",
-  "version": "0.7.0",
-  "apiVersion": 15,
+  "version": "0.8.0",
+  "apiVersion": 16,
   "entry": "plugin.js",
   "description": "Experimento: un feed para contar lo que ves, con comentarios, perfiles y personas a las que seguir",
   "author": "kinotvapp",
@@ -24,7 +24,19 @@
     "identity",
     "ai",
     "schedule",
-    "notifications"
+    "notifications",
+    "coins"
+  ],
+  "settings": [
+    {
+      "key": "dailyBalance",
+      "label": "Aviso diario de saldo",
+      "labelEn": "Daily balance notice",
+      "type": "toggle",
+      "default": true,
+      "hint": "Hacia las 8 p. m., si tienes monedas",
+      "hintEn": "Around 8 p.m., if you have coins"
+    }
   ],
   "jobs": [
     {
@@ -41,6 +53,20 @@
         180
       ],
       "runOn": "any"
+    },
+    {
+      "id": "coins",
+      "label": {
+        "es": "Aviso diario de saldo",
+        "en": "Daily balance notice"
+      },
+      "everyMin": 60,
+      "everyOptions": [
+        60,
+        180
+      ],
+      "runOn": "any",
+      "enabledBy": "dailyBalance"
     }
   ],
   "screen": {
@@ -51,6 +77,6 @@
   },
   "signature": {
     "authorKey": "82b87b938e0a95b142467c815a8823cb54310a13a828c3c4c77b1eda43294ae6",
-    "value": "6ef1dcb561bc08a0d7cf66a728e728bc32634f707721d1406fb8df646ca0751a3b20a61b6300e31504d74b242550b69e3cc05c9e978dc81e95fba36d2a7a8601"
+    "value": "72062bc4d06a58050d575e4f28e0dcdcc6e287ac3218b8b7aeb7dc344c7b078db71f4963eb1ed96eccfd3f1bfa49eb518ae9ea8e39e9a337d7b3a7f2e1c01600"
   }
 }

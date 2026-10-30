@@ -10,6 +10,7 @@ import { linkPreview } from "./linkpreview.js";
 import { titleHint } from "./titlelink.js";
 import { tidyLines } from "./lines.js";
 import { canPublish, cleanQuery, pickAttachment, postBody, recentTitles, searchTitles } from "./attach.js";
+import { coinRefusal, coinsReady, knownTotals, loadCoins, rememberTotal } from "./coins.js";
 
 const MAX_FEED = 80;
 const toast = ([es, en]) => ({ toast: es, toastEn: en });
@@ -47,11 +48,12 @@ async function loadFeed(state) {
   return { feed: page.items, next: page.next, feedTag: page.etag, newer: [] };
 }
 
+/** Your profile, with your coins (null hides them: no coins in this Kino, or the service is unavailable). */
 async function loadProfile(me) {
   // myPlugins carries every attached repo, hidden ones included (`?all=1`) -- the own profile is the one place that
   // needs them, to render the "Ocultos" list (CREATOR-PROFILE-SPEC.md §6).
-  const [p, mine, plugins] = await Promise.all([call("/users/" + me.id), call("/me/activity"), call("/me/plugins?all=1")]);
-  return { profile: p, myActivity: mine.items, myPlugins: plugins.plugins };
+  const [p, mine, plugins, coins] = await Promise.all([call("/users/" + me.id), call("/me/activity"), call("/me/plugins?all=1").catch(() => ({ plugins: [] })), loadCoins()]);
+  return { profile: p, myActivity: mine.items, myPlugins: plugins.plugins, coins, coinTotals: knownTotals() };
 }
 
 async function loadCommunity(id) {
@@ -89,7 +91,7 @@ async function open(state, route) {
       await login();
       me = await call("/me");
     }
-    const base = { me, problem: null, mutedUntil: mutedUntil(me.mutedUntil) };
+    const base = { me, problem: null, mutedUntil: mutedUntil(me.mutedUntil), ...(coinsReady() ? { coinTotals: knownTotals() } : {}) };
     if (!me.handle) return { state: { ...base, view: "welcome" } };
     await syncActivity().catch(() => 0);
     const notes = await call("/notifications").catch(() => ({ unread: 0 }));
@@ -98,6 +100,8 @@ async function open(state, route) {
     const id = (route.args && route.args.id) || (route.params && route.params.id);
     if (route.name === "post" && id) return { state: { ...base, view: "post", thread: await loadThread(id) } };
     if (route.name === "user" && id) return { state: { ...base, view: "user", user: await call("/users/" + id) } };
+    // The daily coins notice opens your profile, where the balance is.
+    if (route.name === "me") return { state: { ...base, view: "me", ...(await loadProfile(me)) } };
     if (route.name === "community" && id) return { state: { ...base, view: "community", ...(await loadCommunity(id)) } };
     return { state: { ...base, view: "main", ...(await loadFeed(state)), unread: notes.unread || 0 } };
   } catch (e) {
@@ -127,6 +131,34 @@ function patchCommunity(state, c) {
   }
   if (state.communityResults) out.communityResults = state.communityResults.map(fix);
   return out;
+}
+
+/** The post [postId] wherever the state holds it (feed, community, open post, profiles). */
+function findPost(state, postId) {
+  const lists = [state.feed, state.cfeed, state.thread && [state.thread.post], state.profile && state.profile.posts, state.user && state.user.posts];
+  for (const list of lists) {
+    const hit = (list || []).find((p) => p && p.type === "post" && sameId(p.id, postId));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** One tap, one coin: Kino gives it through the coins service; the answer is the balance left and the post's total. */
+async function giveCoin(state, postId) {
+  if (!coinsReady()) return null;
+  const post = findPost(state, postId);
+  const to = post && post.user && post.user.coinsAccount;
+  if (!to) return null;
+  if (state.me && sameId(post.user.id, state.me.id)) return toast(T.coinSelf);
+  try {
+    const r = await kino.coins.give({ to, postId: String(postId) });
+    const coins = { ...(state.coins || { earnedToday: 0, capToday: 0 }), balance: Number(r.balance) || 0 };
+    const out = { coins };
+    if (Number.isFinite(Number(r.postTotal))) out.coinTotals = rememberTotal(String(postId), Number(r.postTotal));
+    return { state: out, ...toast(T.coinGiven) };
+  } catch (e) {
+    return toast(coinRefusal(e));
+  }
 }
 
 function patchFollow(state, userId, following) {
@@ -282,6 +314,10 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         const r = await callFresh(`/posts/${arg}/like`, { method: name === "like" ? "POST" : "DELETE" });
         return { state: patchPost(s, arg, () => ({ likes: r.likes, liked: r.liked })) };
       }
+      case "coin":
+        return giveCoin(s, arg);
+      case "loadCoins":
+        return { state: { coins: await loadCoins() } };
       case "openPost": {
         const thread = await loadThread(arg);
         if (device === "tv") return { state: { thread, selected: String(arg) }, focus: "commentText" };

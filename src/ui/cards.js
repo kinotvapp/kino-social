@@ -62,7 +62,28 @@ function linkCard(post, ctx, pfx) {
   };
 }
 
-function actionsRow(post, ctx, pfx, full) {
+/**
+ * Whether a post can get a coin here: this Kino has coins, the server named the author's coins account, and it is not the
+ * person's own post (the service refuses a gift to yourself, so the button never offers one).
+ */
+function coinable(post, ctx, me) {
+  return !!ctx.coins && !!(post.user && post.user.coinsAccount) && !(me && String(post.user.id) === String(me.id));
+}
+
+/** The post's coin total when this device knows it (it learns it from its own gifts), else undefined. */
+const coinTotal = (post, ctx) => {
+  const n = ctx.coinTotals && ctx.coinTotals[String(post.id)];
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
+
+function coinButton(post, ctx, pfx) {
+  const total = coinTotal(post, ctx);
+  return { type: "TextButton", key: pfx + "coin-" + post.id, icon: "star", color: "muted",
+    labelText: total ? count(total) : T.coinShort[0], labelTextEn: total ? count(total) : T.coinShort[1],
+    tooltip: T.giveCoin[0], tooltipEn: T.giveCoin[1], onPressed: { event: "coin", arg: String(post.id) } };
+}
+
+function actionsRow(post, ctx, pfx, full, me) {
   const likeLabel = post.liked ? ["Ya no me gusta", "Unlike"] : ["Me gusta", "Like"];
   return {
     type: "Row", gap: 4, crossAxisAlignment: "center",
@@ -70,6 +91,7 @@ function actionsRow(post, ctx, pfx, full) {
       { type: "TextButton", key: pfx + "like-" + post.id, icon: "heart", labelText: post.likes ? count(post.likes) : likeLabel[0],
         labelTextEn: post.likes ? count(post.likes) : likeLabel[1], selected: !!post.liked, color: post.liked ? "primary" : "muted", tooltip: likeLabel[0], tooltipEn: likeLabel[1],
         onPressed: { event: post.liked ? "unlike" : "like", arg: String(post.id) } },
+      ...(coinable(post, ctx, me) ? [coinButton(post, ctx, pfx)] : []),
       ...(full ? [] : [{ type: "TextButton", key: pfx + "comments-" + post.id, color: "muted",
         labelText: post.comments ? `${count(post.comments)} ${post.comments === 1 ? "comentario" : "comentarios"}` : T.comment[0],
         labelTextEn: post.comments ? `${count(post.comments)} ${post.comments === 1 ? "comment" : "comments"}` : T.comment[1],
@@ -90,8 +112,11 @@ export function postCard(post, ctx, me, { selected = false, full = false } = {})
       // The text as written, line breaks included (a post with an attached title may have none).
       ...(post.text ? [Raw(post.text, { maxLines: full ? undefined : tv ? 4 : 12 })] : []),
       ...(post.link ? [linkCard(post, ctx, pfx)] : []),
-      ...(!tv || full ? [actionsRow(post, ctx, pfx, full)] : [{ type: "Row", gap: 16, children: [
+      ...(!tv || full ? [actionsRow(post, ctx, pfx, full, me)] : [{ type: "Row", gap: 16, children: [
         { type: "Row", gap: 4, crossAxisAlignment: "center", children: [{ type: "Icon", name: "heart", color: post.liked ? "error" : "muted" }, Raw(count(post.likes || 0), { style: "caption", color: "muted" })] },
+        // The TV only shows a known coin total, like the likes: giving happens in the open post beside the feed.
+        ...(coinable(post, ctx, me) && coinTotal(post, ctx) ? [{ type: "Row", key: "coinTotal-" + post.id, gap: 4, crossAxisAlignment: "center",
+          children: [{ type: "Icon", name: "star", color: "muted" }, Raw(count(coinTotal(post, ctx)), { style: "caption", color: "muted" })] }] : []),
         ...(post.comments ? [Txt([`${count(post.comments)} ${post.comments === 1 ? "comentario" : "comentarios"}`, `${count(post.comments)} ${post.comments === 1 ? "comment" : "comments"}`], { style: "caption", color: "muted" })] : []),
       ] }]),
     ],
