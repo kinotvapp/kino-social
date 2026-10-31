@@ -1590,11 +1590,11 @@ function mainView(s, ctx) {
   };
 }
 function meView(s, ctx) {
+  const heading = isTv(ctx) ? { title: Txt(T.profile, { style: "h5", bold: true }) } : { title: T.profile[0], titleEn: T.profile[1] };
   return { type: "Scaffold", appBar: {
     type: "AppBar",
     ...barPadding(ctx),
-    title: T.profile[0],
-    titleEn: T.profile[1],
+    ...heading,
     leading: IconBtn("arrow_back", T.back, "back")
   }, body: profileTab(s, ctx) };
 }

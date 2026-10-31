@@ -71,8 +71,11 @@ test("TV profile: the bars of the pages with a back arrow share the home bar's p
   assert.ok(!rest.some((r) => find(r, (n) => n.key === "editProfileBtn").length), "not again below");
   assert.deepEqual(userView({ me: ME, user: { user: { id: 2, name: "Ana" }, postCount: 0, followers: 0, followingCount: 0, posts: [], activity: [] } }, tv).appBar.padding, { x: 24, y: 12 });
   assert.deepEqual(postView({ me: ME }, tv).appBar.padding, { x: 24, y: 12 });
+  assert.equal(view.appBar.title.type, "Text", "a node, so it can be smaller than Kino's h3");
+  assert.equal(view.appBar.title.style, "h5");
   const phone = meView(own, { device: "phone" });
   assert.equal(phone.appBar.padding, undefined);
+  assert.equal(phone.appBar.title, "Perfil", "a phone keeps Kino's own heading");
   const phoneHead = find(phone.body, (n) => n.key === "head-1")[0];
   assert.equal(find(phoneHead.children[0], (n) => n.key === "editProfileBtn").length, 0, "a phone keeps it under the numbers");
   assert.equal(find(phoneHead, (n) => n.key === "editProfileBtn").length, 1);

@@ -414,7 +414,9 @@ export function mainView(s, ctx) {
 
 /** Your own profile: a page over the tabs, with the back arrow. */
 export function meView(s, ctx) {
-  return { type: "Scaffold", appBar: { type: "AppBar", ...barPadding(ctx), title: T.profile[0], titleEn: T.profile[1],
+  // The TV's heading is Kino's big one (h3); "Perfil" says little, so it is drawn smaller there.
+  const heading = isTv(ctx) ? { title: Txt(T.profile, { style: "h5", bold: true }) } : { title: T.profile[0], titleEn: T.profile[1] };
+  return { type: "Scaffold", appBar: { type: "AppBar", ...barPadding(ctx), ...heading,
     leading: IconBtn("arrow_back", T.back, "back") }, body: profileTab(s, ctx) };
 }
 
