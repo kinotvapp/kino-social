@@ -180,9 +180,36 @@ function threadBody(s, ctx) {
 
 // ---- tabs ------------------------------------------------------------------------------------------------------------
 
+/** The drafts other plugins proposed (the "wall" door): each with Revisar (into the composer) and Descartar. */
+export function draftsBanner(s) {
+  const drafts = s.drafts || [];
+  if (!drafts.length) return null;
+  const row = (d) => ({
+    type: "Column", key: "draft-" + d.id, gap: 4, children: [
+      Txt(d.from ? T.draftFrom(d.from) : T.draftFromUnknown, { style: "label", color: "muted" }),
+      ...(d.text ? [Raw(d.text, { maxLines: 3 })] : []),
+      ...(d.titled ? [Txt(T.draftWithTitle, { style: "caption", color: "muted" })] : []),
+      { type: "Row", gap: 8, children: [
+        Button(T.review, { event: "reviewDraft", arg: d.id, timeoutMs: 20000 }, { key: "review-" + d.id, icon: "edit" }),
+        TextBtn(T.discard, { event: "discardDraft", arg: d.id }, { key: "discard-" + d.id }),
+      ] },
+    ],
+  });
+  return {
+    type: "Card", key: "drafts", variant: "outlined", padding: 12, gap: 12, margin: { x: 12, y: 8 },
+    children: [
+      Txt(T.draftsTitle(drafts.length), { style: "h5", bold: true }),
+      Txt(T.draftsHint, { style: "caption", color: "muted" }),
+      ...drafts.map(row),
+    ],
+  };
+}
+
 export function feedTab(s, ctx, src = generalSource(s)) {
+  const drafts = src.key === "feed" ? draftsBanner(s) : null;
   if (!isTv(ctx)) {
     return { type: "Column", flex: 1, children: [
+      ...(drafts ? [drafts] : []),
       feedList(s, ctx, src),
       composerSheet(s),
     ] };
@@ -196,6 +223,7 @@ export function feedTab(s, ctx, src = generalSource(s)) {
         ...(src.canPost && muted(s) ? [muteLine(muted(s))] : []),
         ...(src.key === "feed" && newerBanner(s) ? [newerBanner(s)] : []),
       ] }] : []),
+      ...(drafts ? [{ ...drafts, margin: 0 }] : []),
       { ...feedList(s, ctx, src), padding: 0 },
     ] },
     { type: "Card", key: "pane", flex: 5, background: "surfaceVariant", padding: 16, canRequestFocus: !(s.thread && s.thread.post),

@@ -6,6 +6,16 @@ export const both = (es, en) => ({ text: es, textEn: en });
 export const label = (es, en) => ({ labelText: es, labelTextEn: en });
 
 export const T = {
+  // Drafts other plugins proposed (the "wall" door)
+  draftsTitle: (n) => [n === 1 ? "1 publicación por revisar" : `${n} publicaciones por revisar`, n === 1 ? "1 post to review" : `${n} posts to review`],
+  draftsHint: ["Otros plugins te proponen publicar esto. Nada sale sin que lo revises.", "Other plugins suggest posting this. Nothing goes out until you review it."],
+  draftFrom: (who) => [`De ${who}`, `From ${who}`],
+  draftFromUnknown: ["De otro plugin", "From another plugin"],
+  draftWithTitle: ["Con un título adjunto", "With a title attached"],
+  review: ["Revisar", "Review"],
+  discard: ["Descartar", "Discard"],
+  draftDiscarded: ["Borrador descartado", "Draft discarded"],
+  draftGone: ["Ese borrador ya no está", "That draft is gone"],
   // Communities
   communities: ["Comunidades", "Communities"],
   members: (n) => [n === 1 ? "1 miembro" : `${n} miembros`, n === 1 ? "1 member" : `${n} members`],

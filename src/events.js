@@ -11,6 +11,10 @@ import { titleHint } from "./titlelink.js";
 import { tidyLines } from "./lines.js";
 import { canPublish, cleanQuery, pickAttachment, postBody, recentTitles, searchTitles, withPoster } from "./attach.js";
 import { coinRefusal, coinsReady, coinsSwitchedOff, knownTotals, loadCoins, rememberTotal } from "./coins.js";
+import { draftById, readDrafts, removeDraft, reviewState } from "./wall.js";
+
+/** The drafts other plugins proposed, as the feed's banner lists them (a few short fields each). */
+const draftsState = () => readDrafts().map((d) => ({ id: d.id, from: d.from || "", text: (d.text || d.link || "").slice(0, 140), titled: !!d.title }));
 
 const MAX_FEED = 80;
 const toast = ([es, en]) => ({ toast: es, toastEn: en });
@@ -105,7 +109,14 @@ async function open(state, route) {
     // The daily coins notice opens your profile, where the balance is.
     if (route.name === "me") return { state: { ...base, view: "me", ...(await loadProfile(me)) } };
     if (route.name === "community" && id) return { state: { ...base, view: "community", ...(await loadCommunity(id)) } };
-    return { state: { ...base, view: "main", ...(await loadFeed(state)), unread: notes.unread || 0 } };
+    const main = { ...base, view: "main", ...(await loadFeed(state)), unread: notes.unread || 0, drafts: draftsState() };
+    // A draft's notice opens the feed with that draft in the composer, ready for the person's own Publicar.
+    const draft = route.name === "draft" && id ? draftById(id) : null;
+    if (draft) {
+      const review = await reviewState(draft);
+      return { state: { ...main, ...review.state }, ui: review.ui };
+    }
+    return { state: main };
   } catch (e) {
     return { state: { problem: e instanceof ApiError ? e.code : "offline" } };
   }
@@ -205,13 +216,16 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         if (s.tab === "communities") out.communities = await call("/communities");
         await syncActivity().catch(() => 0);
         const notes = await call("/notifications").catch(() => ({ unread: s.unread || 0 }));
-        return { state: { ...out, unread: notes.unread || 0 }, ...toast(["Al día", "Up to date"]) };
+        return { state: { ...out, unread: notes.unread || 0, drafts: draftsState() }, ...toast(["Al día", "Up to date"]) };
       }
       case "tick": {
         // Nobody's press: a conditional GET of the first page; new posts wait behind «N nuevas» instead of moving the feed.
         // A mute that ran out unlocks the composer and the comment field without a press.
         if (s.mutedUntil && !mutedUntil(s.mutedUntil)) return { state: { mutedUntil: 0 } };
         if (s.view !== "main" || !s.feed) return null;
+        // A draft another plugin proposed while the screen was open shows up in the feed's banner.
+        const drafts = draftsState();
+        if (drafts.length !== (s.drafts || []).length) return { state: { drafts } };
         const page = await call("/feed?limit=20", { etag: s.feedTag }).catch(() => ({ notModified: true }));
         if (page.notModified) return null;
         const known = new Set([...(s.feed || []), ...(s.newer || [])].map((i) => i.type + ":" + i.id));
@@ -292,6 +306,16 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         return { state: closedPicker(), focus: "openAttach" };
       case "clearAttach":
         return { state: { attach: null }, focus: "openAttach" };
+      // A draft another plugin proposed: into the composer (the person still presses Publicar), or away.
+      case "reviewDraft": {
+        const d = draftById(arg);
+        if (!d) return { state: { drafts: draftsState() }, ...toast(T.draftGone) };
+        const review = await reviewState(d);
+        return { state: { ...review.state, tab: "feed" }, ui: review.ui };
+      }
+      case "discardDraft":
+        removeDraft(arg);
+        return { state: { drafts: draftsState(), ...(s.draftId === String(arg) ? { draftId: null } : {}) }, ...toast(T.draftDiscarded) };
       case "publish": {
         const values = (arguments[0] && arguments[0].values) || inputs;
         const raw = tidyLines(values.postText ?? inputs.postText);
@@ -310,7 +334,9 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
           ? { cfeed: mergeById([post, ...(s.cfeed || [])]).slice(0, MAX_FEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } }
           : { feed: mergeById([post, ...(s.feed || [])]).slice(0, MAX_FEED), tab: "feed" };
         const warned = moderationDialog(post);
-        return { state: { ...placed, ...moderationState(post), attach: null, ...closedPicker(), inputs: { postText: "", titleSearch: "" } },
+        // A reviewed draft is done once it is out.
+        if (s.draftId) removeDraft(s.draftId);
+        return { state: { ...placed, ...moderationState(post), attach: null, draftId: null, drafts: draftsState(), ...closedPicker(), inputs: { postText: "", titleSearch: "" } },
           ui: [{ close: "composer" }], ...(warned ? { dialog: warned } : toast(T.published)) };
       }
       case "like":

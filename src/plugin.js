@@ -3,12 +3,15 @@
 
 import { balanceNotice, coinsReady } from "./coins.js";
 import { postNotices } from "./notices.js";
+import { postDraftNotices } from "./wall.js";
 import { communityView } from "./ui/communities.js";
 import { mainView, meView, postView, problemView, userView, welcomeView } from "./ui/views.js";
 
 export { screenEvent } from "./events.js";
 export { track } from "./track.js";
 export { panel, panelAction } from "./panel.js";
+// The plugin protocol's "wall" door: other plugins propose a post, the person reviews and publishes it (wall.js).
+export { proto_wall_share } from "./wall.js";
 
 /** A pure view of the state Kino keeps; the reserved `open` event loads it. */
 export async function screen({ state, route, device, size, lang }) {
@@ -37,5 +40,7 @@ export async function job(ctx) {
     await balanceNotice();
     return;
   }
+  // Drafts other plugins proposed first: they need no server, so a run without a session still announces them.
+  await postDraftNotices();
   await postNotices();
 }

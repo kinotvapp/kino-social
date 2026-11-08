@@ -1,7 +1,7 @@
 {
   "id": "kino-social",
   "name": "Kino Social",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "apiVersion": 16,
   "entry": "plugin.js",
   "description": "Experimento: un feed para contar lo que ves, con comentarios, perfiles y personas a las que seguir",
@@ -82,8 +82,41 @@
     "labelEn": "Kino Social",
     "icon": "mood"
   },
+  "enhancements": {
+    "20": {
+      "provides": {
+        "wall": {
+          "summary": "Propone publicaciones para tu muro de Kino Social; tú las revisas y las publicas",
+          "calls": {
+            "share": {
+              "in": "Share",
+              "out": {
+                "status": "string",
+                "draftId": "string",
+                "pending": "number"
+              }
+            }
+          },
+          "types": {
+            "Share": {
+              "text": "string?",
+              "title": "Title?",
+              "link": "string?",
+              "from": "string?"
+            },
+            "Title": {
+              "kind": "string",
+              "tmdb": "number",
+              "season": "number?",
+              "episode": "number?"
+            }
+          }
+        }
+      }
+    }
+  },
   "signature": {
     "authorKey": "82b87b938e0a95b142467c815a8823cb54310a13a828c3c4c77b1eda43294ae6",
-    "value": "620ff43752ffd8176ae252b8c4e75a5a6cbf260474665a59e9dae808ab0149aaaeb7d0e003fd8799d20d0857a6439f492477924080ceea5fea8b0b664339240b"
+    "value": "a5b0059b77ebfa2a0b0a5b90e2a5225df2304dc2c5f9fa90e86c6fd22209cb09ceb5fb10b2ba987ca7822e87d4e4bd9e5ef01b6d34875ed8531401f15946ce0d"
   }
 }

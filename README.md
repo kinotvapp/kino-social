@@ -46,6 +46,7 @@ src/
   activity.js    backfill from kino.library.watched when the screen opens (only finished titles, never 18+)
   notices.js     job("notices"): new comments, likes and followers become notices in Kino's bell
   coins.js       kino.coins: the balance, one coin per tap for a post, and job("coins"), the daily balance notice
+  wall.js        the protocol's "wall" door: other plugins' proposals kept as drafts, their bell notice, the review
   linkpreview.js a link's preview, read on the device: the page's head (Open Graph) or YouTube's oEmbed
   titlelink.js   a TMDB or IMDb link gets its title and poster from Kino's TMDB (those sites refuse previews)
   swear.js       swear words become "xxxx": a local list first, the AI only when the list finds nothing
@@ -66,6 +67,44 @@ node ../sdk/run.mjs --device tv . screen                  # the TV layout
 npm test                                                  # node --test test/*.test.mjs
 ```
 
+## Posting to the wall from another plugin / Publicar en el muro desde otro plugin
+
+Kino Social opens the door **`wall`** of the plugin protocol (Kino 0.9.81, apiVersion 20; declared in
+`enhancements["20"]`, so an older Kino still installs it). Any plugin may propose a post; **nothing is published by
+another plugin**: the proposal is kept as a draft, the bell announces it ("Megaplay quiere publicar en tu muro") and the
+feed shows it at the top with Revisar / Descartar. Revisar opens the composer filled in; the person presses Publicar.
+
+Cualquier plugin puede proponer una publicación; **ningún plugin publica por su cuenta**: queda como borrador, la campanita
+avisa y la persona la revisa y la publica (o la descarta).
+
+In the consumer's manifest (apiVersion 20, or inside `enhancements["20"]`):
+
+```json
+"consumes": { "social": { "repo": "kinotvapp/kino-social", "door": "wall", "calls": ["share"] } },
+"recommends": ["kinotvapp/kino-social"]
+```
+
+In its code (from `screenEvent` or another export the person started; never a background `job`):
+
+```js
+try {
+  const r = await kino.plugins.call("social", "share", {
+    text: "Viendo Frieren",                                            // optional, up to 500 characters
+    title: { kind: "series", tmdb: 209867, season: 1, episode: 3 },     // optional: a movie or series by TMDB id
+    link: "https://example.com/page",                                   // optional, https only
+    from: "Megaplay",                                                   // optional: your name, shown in the notice
+  });
+  // r = { status: "draft", draftId, pending }: tell the person it waits in Kino Social
+} catch (e) {
+  if (e.code === "provider_missing") { /* offer go.installPlugin "kinotvapp/kino-social" */ }
+}
+```
+
+At least one of `text`, `title` or `link`. Kino refuses any other field (`bad_input`); an empty proposal, a title that is not
+`movie`/`series` or a link that is not `https` fails with `provider_failed`. At most 5 drafts wait (the oldest goes) and
+the same proposal twice keeps one; drafts older than 14 days are dropped. Kino does not tell a provider who is calling, so
+`from` is the sender's own word; the person sees everything before it goes out.
+
 ## What it asks for
 
 `library` (read what you watched), `tracking` (Kino tells it when you finish an episode or a movie), `identity` (who you
@@ -74,6 +113,9 @@ are, without a login), `ai` (the swear filter's fallback), `schedule` (checking 
 Each shows its line on the install sheet and can be switched off in Ajustes (`coins` by disabling the plugin).
 
 ## Changes
+
+- **0.9.7** — the `wall` door of the plugin protocol: other plugins propose posts, kept as drafts the person reviews and
+  publishes (bell notice, banner at the top of the feed). Kino 0.9.81 for the door; older Kinos ignore it.
 
 - **0.7.0** — Kino coins: a star next to the heart gives one coin to a post's author, your balance and today's progress on your
   profile, and a daily balance notice (setting "Aviso diario de saldo", on by default). Needs Kino 0.9.78 (apiVersion 16).

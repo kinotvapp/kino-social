@@ -3,6 +3,16 @@
 // src/i18n.js
 var label = (es, en) => ({ labelText: es, labelTextEn: en });
 var T = {
+  // Drafts other plugins proposed (the "wall" door)
+  draftsTitle: (n) => [n === 1 ? "1 publicación por revisar" : `${n} publicaciones por revisar`, n === 1 ? "1 post to review" : `${n} posts to review`],
+  draftsHint: ["Otros plugins te proponen publicar esto. Nada sale sin que lo revises.", "Other plugins suggest posting this. Nothing goes out until you review it."],
+  draftFrom: (who) => [`De ${who}`, `From ${who}`],
+  draftFromUnknown: ["De otro plugin", "From another plugin"],
+  draftWithTitle: ["Con un título adjunto", "With a title attached"],
+  review: ["Revisar", "Review"],
+  discard: ["Descartar", "Discard"],
+  draftDiscarded: ["Borrador descartado", "Draft discarded"],
+  draftGone: ["Ese borrador ya no está", "That draft is gone"],
   // Communities
   communities: ["Comunidades", "Communities"],
   members: (n) => [n === 1 ? "1 miembro" : `${n} miembros`, n === 1 ? "1 member" : `${n} members`],
@@ -664,6 +674,130 @@ async function postNotices() {
   return posted;
 }
 
+// src/wall.js
+var DRAFTS_KEY = "wallDrafts1";
+var MAX_DRAFTS = 5;
+var MAX_TEXT = 500;
+var MAX_LINK = 500;
+var MAX_FROM = 40;
+var DRAFT_TTL_MS = 14 * 24 * 3600 * 1e3;
+var ok = (v) => v !== void 0 && v !== null;
+var tidy = (s) => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").replace(/\n{3,}/g, "\n\n").trim();
+function cleanLink(v) {
+  if (!ok(v)) return null;
+  const s = String(v).trim();
+  if (s.length > MAX_LINK) return null;
+  let u;
+  try {
+    u = new URL(s);
+  } catch (_) {
+    return null;
+  }
+  if (u.protocol !== "https:" || !u.hostname.includes(".") || u.username || u.password) return null;
+  return u.toString();
+}
+function checkShare(arg) {
+  const a = arg && typeof arg === "object" ? arg : {};
+  const text = ok(a.text) ? tidy(a.text).slice(0, MAX_TEXT) : "";
+  let title = null;
+  if (ok(a.title)) {
+    const t = a.title;
+    const tmdb = Number(t.tmdb);
+    if (t.kind !== "movie" && t.kind !== "series" || !Number.isInteger(tmdb) || tmdb <= 0 || tmdb >= 1e9) return "bad_title";
+    title = { kind: t.kind, tmdb };
+    if (t.kind === "series" && Number.isInteger(t.season) && t.season > 0 && Number.isInteger(t.episode) && t.episode > 0) {
+      title.season = t.season;
+      title.episode = t.episode;
+    }
+  }
+  const link = ok(a.link) ? cleanLink(a.link) : null;
+  if (ok(a.link) && !link) return "bad_link";
+  const from = ok(a.from) ? tidy(a.from).replace(/\s+/g, " ").slice(0, MAX_FROM) : "";
+  if (!text && !title && !link) return "empty";
+  return { text, title, link, from };
+}
+function readDrafts(now = Date.now()) {
+  let list;
+  try {
+    list = JSON.parse(kino.storage.get(DRAFTS_KEY) || "[]");
+  } catch (_) {
+    list = [];
+  }
+  return (Array.isArray(list) ? list : []).filter((d) => d && typeof d.id === "string" && now - Number(d.at || 0) < DRAFT_TTL_MS);
+}
+function writeDrafts(list) {
+  try {
+    kino.storage.set(DRAFTS_KEY, JSON.stringify(list.slice(0, MAX_DRAFTS)));
+  } catch (_) {
+  }
+}
+var draftById = (id) => readDrafts().find((d) => d.id === String(id)) || null;
+function removeDraft(id) {
+  writeDrafts(readDrafts().filter((d) => d.id !== String(id)));
+}
+function markNoticed(ids) {
+  const set = new Set(ids);
+  writeDrafts(readDrafts().map((d) => set.has(d.id) ? { ...d, noticed: true } : d));
+}
+var newId = (now) => now.toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+async function proto_wall_share(arg) {
+  await null;
+  const share = checkShare(arg);
+  if (typeof share === "string") throw new Error(share);
+  const now = Date.now();
+  const same = (d) => d.text === share.text && d.link === share.link && JSON.stringify(d.title) === JSON.stringify(share.title);
+  const kept = readDrafts(now);
+  const twin = kept.find(same);
+  const draft = twin || { id: newId(now), at: now, ...share };
+  writeDrafts([draft, ...kept.filter((d) => d.id !== draft.id)]);
+  return { status: "draft", draftId: draft.id, pending: Math.min(kept.length + (twin ? 0 : 1), MAX_DRAFTS) };
+}
+function draftNotice(d) {
+  const who = d.from || "";
+  const excerpt = (d.text || d.link || "").slice(0, 120);
+  return {
+    id: "dr" + d.id,
+    title: who ? `${who} quiere publicar en tu muro` : "Tienes una publicación por revisar",
+    titleEn: who ? `${who} wants to post on your wall` : "You have a post to review",
+    text: excerpt ? excerpt : "Revísala y publícala si quieres",
+    textEn: excerpt ? excerpt : "Review it and post it if you like",
+    go: { screen: { route: "draft", args: { id: d.id } } }
+  };
+}
+async function postDraftNotices() {
+  if (typeof kino.notifications !== "object") return 0;
+  const fresh = readDrafts().filter((d) => !d.noticed).reverse();
+  const done = [];
+  for (const d of fresh) {
+    try {
+      await kino.notifications.post(draftNotice(d));
+    } catch (_) {
+      break;
+    }
+    done.push(d.id);
+  }
+  if (done.length) markNoticed(done);
+  return done.length;
+}
+async function reviewState(d) {
+  let attach = null;
+  if (d.title && typeof kino.tmdb === "function") {
+    try {
+      const info = await kino.tmdb((d.title.kind === "movie" ? "/movie/" : "/tv/") + d.title.tmdb, { language: "es" });
+      attach = fromTmdb(info && { ...info, id: d.title.tmdb }, d.title.kind);
+      if (attach) attach = await withPoster(attach);
+      if (attach && d.title.season && d.title.episode) attach = { ...attach, season: d.title.season, episode: d.title.episode };
+    } catch (_) {
+      attach = null;
+    }
+  }
+  const text = [d.text, d.link && !(d.text || "").includes(d.link) ? d.link : ""].filter(Boolean).join("\n").slice(0, MAX_TEXT);
+  return {
+    state: { attach, draftId: d.id, picking: false, inputs: { postText: text, titleSearch: "" } },
+    ui: [{ open: "composer" }]
+  };
+}
+
 // src/ui/kit.js
 var isTv = (ctx) => ctx.device === "tv";
 var barPadding = (ctx) => isTv(ctx) ? { padding: { x: 24, y: 12 } } : {};
@@ -1059,7 +1193,7 @@ function commentRow(c, me) {
 }
 
 // src/ui/views.js
-var MAX_TEXT = 500;
+var MAX_TEXT2 = 500;
 var muted = (s) => mutedUntil(s.mutedUntil);
 function composerPrompt(s) {
   const until = muted(s);
@@ -1166,7 +1300,7 @@ function composerSheet(s) {
         key: "postText",
         multiline: true,
         maxLines: 8,
-        maxLength: MAX_TEXT,
+        maxLength: MAX_TEXT2,
         required: !attach,
         labelText: T.prompt[0],
         labelTextEn: T.prompt[1],
@@ -1281,9 +1415,42 @@ function threadBody(s, ctx) {
   }
   return [...threadItems(s, ctx), commentBox(s)];
 }
+function draftsBanner(s) {
+  const drafts = s.drafts || [];
+  if (!drafts.length) return null;
+  const row = (d) => ({
+    type: "Column",
+    key: "draft-" + d.id,
+    gap: 4,
+    children: [
+      Txt(d.from ? T.draftFrom(d.from) : T.draftFromUnknown, { style: "label", color: "muted" }),
+      ...d.text ? [Raw(d.text, { maxLines: 3 })] : [],
+      ...d.titled ? [Txt(T.draftWithTitle, { style: "caption", color: "muted" })] : [],
+      { type: "Row", gap: 8, children: [
+        Button(T.review, { event: "reviewDraft", arg: d.id, timeoutMs: 2e4 }, { key: "review-" + d.id, icon: "edit" }),
+        TextBtn(T.discard, { event: "discardDraft", arg: d.id }, { key: "discard-" + d.id })
+      ] }
+    ]
+  });
+  return {
+    type: "Card",
+    key: "drafts",
+    variant: "outlined",
+    padding: 12,
+    gap: 12,
+    margin: { x: 12, y: 8 },
+    children: [
+      Txt(T.draftsTitle(drafts.length), { style: "h5", bold: true }),
+      Txt(T.draftsHint, { style: "caption", color: "muted" }),
+      ...drafts.map(row)
+    ]
+  };
+}
 function feedTab(s, ctx, src = generalSource(s)) {
+  const drafts = src.key === "feed" ? draftsBanner(s) : null;
   if (!isTv(ctx)) {
     return { type: "Column", flex: 1, children: [
+      ...drafts ? [drafts] : [],
       feedList(s, ctx, src),
       composerSheet(s)
     ] };
@@ -1295,6 +1462,7 @@ function feedTab(s, ctx, src = generalSource(s)) {
         ...src.canPost && muted(s) ? [muteLine(muted(s))] : [],
         ...src.key === "feed" && newerBanner(s) ? [newerBanner(s)] : []
       ] }] : [],
+      ...drafts ? [{ ...drafts, margin: 0 }] : [],
       { ...feedList(s, ctx, src), padding: 0 }
     ] },
     {
@@ -1625,7 +1793,7 @@ function userView(s, ctx) {
   }, body };
 }
 function welcomeView(s, ctx) {
-  const ok = s.handleCheck;
+  const ok2 = s.handleCheck;
   return { type: "SingleChildScrollView", children: [{ type: "Column", padding: { x: 24, y: 32 }, gap: 16, maxWidth: 480, alignSelf: "center", fill: true, children: [
     { type: "Column", fill: true, crossAxisAlignment: "center", children: [Avatar(s.me || { name: "?" }, 40)] },
     Txt(["Bienvenido a Kino Social", "Welcome to Kino Social"], { style: "h2", textAlign: "center" }),
@@ -1644,11 +1812,11 @@ function welcomeView(s, ctx) {
         labelTextEn: "@username",
         onChanged: "checkHandle"
       },
-      ...ok ? [{ type: "Row", gap: 8, crossAxisAlignment: "center", children: [
-        { type: "Icon", name: ok.available ? "check" : "close", size: "sm", color: ok.available ? "secondary" : "error" },
+      ...ok2 ? [{ type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+        { type: "Icon", name: ok2.available ? "check" : "close", size: "sm", color: ok2.available ? "secondary" : "error" },
         Txt(
-          ok.available ? [`@${ok.handle} está libre`, `@${ok.handle} is free`] : [`@${ok.handle} no está disponible`, `@${ok.handle} is not available`],
-          { style: "caption", color: ok.available ? "muted" : "error" }
+          ok2.available ? [`@${ok2.handle} está libre`, `@${ok2.handle} is free`] : [`@${ok2.handle} no está disponible`, `@${ok2.handle} is not available`],
+          { style: "caption", color: ok2.available ? "muted" : "error" }
         )
       ] }] : [],
       { type: "TextField", key: "nameText", required: true, maxLength: 40, labelText: T.name[0], labelTextEn: T.name[1] },
@@ -2542,6 +2710,7 @@ function tidyLines(text) {
 }
 
 // src/events.js
+var draftsState = () => readDrafts().map((d) => ({ id: d.id, from: d.from || "", text: (d.text || d.link || "").slice(0, 140), titled: !!d.title }));
 var MAX_FEED = 80;
 var toast = ([es, en]) => ({ toast: es, toastEn: en });
 function failure(e) {
@@ -2612,7 +2781,13 @@ async function open(state, route) {
     if (route.name === "user" && id) return { state: { ...base, view: "user", user: await call("/users/" + id) } };
     if (route.name === "me") return { state: { ...base, view: "me", ...await loadProfile(me) } };
     if (route.name === "community" && id) return { state: { ...base, view: "community", ...await loadCommunity(id) } };
-    return { state: { ...base, view: "main", ...await loadFeed(state), unread: notes.unread || 0 } };
+    const main = { ...base, view: "main", ...await loadFeed(state), unread: notes.unread || 0, drafts: draftsState() };
+    const draft = route.name === "draft" && id ? draftById(id) : null;
+    if (draft) {
+      const review = await reviewState(draft);
+      return { state: { ...main, ...review.state }, ui: review.ui };
+    }
+    return { state: main };
   } catch (e) {
     return { state: { problem: e instanceof ApiError ? e.code : "offline" } };
   }
@@ -2699,11 +2874,13 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         if (s.tab === "communities") out.communities = await call("/communities");
         await syncActivity().catch(() => 0);
         const notes = await call("/notifications").catch(() => ({ unread: s.unread || 0 }));
-        return { state: { ...out, unread: notes.unread || 0 }, ...toast(["Al día", "Up to date"]) };
+        return { state: { ...out, unread: notes.unread || 0, drafts: draftsState() }, ...toast(["Al día", "Up to date"]) };
       }
       case "tick": {
         if (s.mutedUntil && !mutedUntil(s.mutedUntil)) return { state: { mutedUntil: 0 } };
         if (s.view !== "main" || !s.feed) return null;
+        const drafts = draftsState();
+        if (drafts.length !== (s.drafts || []).length) return { state: { drafts } };
         const page = await call("/feed?limit=20", { etag: s.feedTag }).catch(() => ({ notModified: true }));
         if (page.notModified) return null;
         const known = new Set([...s.feed || [], ...s.newer || []].map((i) => i.type + ":" + i.id));
@@ -2800,6 +2977,15 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         return { state: closedPicker(), focus: "openAttach" };
       case "clearAttach":
         return { state: { attach: null }, focus: "openAttach" };
+      case "reviewDraft": {
+        const d = draftById(arg);
+        if (!d) return { state: { drafts: draftsState() }, ...toast(T.draftGone) };
+        const review = await reviewState(d);
+        return { state: { ...review.state, tab: "feed" }, ui: review.ui };
+      }
+      case "discardDraft":
+        removeDraft(arg);
+        return { state: { drafts: draftsState(), ...s.draftId === String(arg) ? { draftId: null } : {} }, ...toast(T.draftDiscarded) };
       case "publish": {
         const values = arguments[0] && arguments[0].values || inputs;
         const raw = tidyLines(values.postText ?? inputs.postText);
@@ -2813,8 +2999,9 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         const post2 = await callFresh("/posts", { method: "POST", json });
         const placed = inCommunity ? { cfeed: mergeById([post2, ...s.cfeed || []]).slice(0, MAX_FEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } } : { feed: mergeById([post2, ...s.feed || []]).slice(0, MAX_FEED), tab: "feed" };
         const warned = moderationDialog(post2);
+        if (s.draftId) removeDraft(s.draftId);
         return {
-          state: { ...placed, ...moderationState(post2), attach: null, ...closedPicker(), inputs: { postText: "", titleSearch: "" } },
+          state: { ...placed, ...moderationState(post2), attach: null, draftId: null, drafts: draftsState(), ...closedPicker(), inputs: { postText: "", titleSearch: "" } },
           ui: [{ close: "composer" }],
           ...warned ? { dialog: warned } : toast(T.published)
         };
@@ -3166,12 +3353,14 @@ async function job(ctx) {
     await balanceNotice();
     return;
   }
+  await postDraftNotices();
   await postNotices();
 }
 export {
   job,
   panel,
   panelAction,
+  proto_wall_share,
   screen,
   screenEvent,
   track
