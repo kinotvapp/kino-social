@@ -11,7 +11,7 @@ export { screenEvent } from "./events.js";
 export { track } from "./track.js";
 export { panel, panelAction } from "./panel.js";
 // The plugin protocol's "wall" door: other plugins propose a post, the person reviews and publishes it (wall.js).
-export { proto_wall_share } from "./wall.js";
+export { proto_wall_card, proto_wall_share } from "./wall.js";
 
 /** A pure view of the state Kino keeps; the reserved `open` event loads it. */
 export async function screen({ state, route, device, size, lang }) {

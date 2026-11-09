@@ -47,6 +47,9 @@ src/
   notices.js     job("notices"): new comments, likes and followers become notices in Kino's bell
   coins.js       kino.coins: the balance, one coin per tap for a post, and job("coins"), the daily balance notice
   wall.js        the protocol's "wall" door: other plugins' proposals kept as drafts, their bell notice, the review
+  card.js        a share card from the door's `card` call: the caller from ctx, lengths cut, image and route checked
+  direct.js      «Publicar ya»: the plugins allowed to post directly (a synced list setting) and their direct publish
+  imagesize.js   a PNG or JPEG thumbnail's size read from its header (no image decoder)
   linkpreview.js a link's preview, read on the device: the page's head (Open Graph) or YouTube's oEmbed
   titlelink.js   a TMDB or IMDb link gets its title and poster from Kino's TMDB (those sites refuse previews)
   swear.js       swear words become "xxxx": a local list first, the AI only when the list finds nothing
@@ -103,7 +106,66 @@ try {
 At least one of `text`, `title` or `link`. Kino refuses any other field (`bad_input`); an empty proposal, a title that is not
 `movie`/`series` or a link that is not `https` fails with `provider_failed`. At most 5 drafts wait (the oldest goes) and
 the same proposal twice keeps one; drafts older than 14 days are dropped. Kino does not tell a provider who is calling, so
-`from` is the sender's own word; the person sees everything before it goes out.
+`from` is the sender's own word; the person sees everything before it goes out. From Kino 0.9.84 Kino tells the provider
+who is calling (`ctx.caller`): the draft then keeps that plugin and shows its real name instead of `from`. `publish: true`
+(optional) asks to skip the review: see [Publish now](#publish-now--publicar-ya).
+
+Both calls answer the door's `Answer`: `{ status, draftId?, pending?, postId? }`: `{ status: "draft", draftId, pending }`
+(`pending`: how many drafts wait) or, for a plugin the person allowed, `{ status: "published", postId }`.
+
+### Publish now / Publicar ya
+
+`publish: true` on `share` or `card` asks to go out without the review. **The first time** it is still a draft; when the
+person publishes it, Kino Social asks «¿Permitir que <plugin> publique directo en tu muro?» with Permitir / Solo esta vez.
+After Permitir, that plugin's next `publish: true` is posted at once and answers `{ status: "published", postId }`.
+
+La primera vez queda como borrador; al publicarlo, Kino Social pregunta si ese plugin puede publicar directo. Con Permitir,
+lo siguiente que comparta con `publish: true` sale sin pasar por la revisión.
+
+- The allowed plugins are Kino Social's setting **«Plugins que publican directo»** (by the address the plugin was installed
+  from, `@ref` cut, compared ignoring case; synced to the person's other devices). The person removes one on their own
+  profile (bottom of the page) or in Ajustes ▸ Plugins ▸ Kino Social. At most 20; a 21st drops the oldest.
+- A direct post goes through everything a post from the composer does: the swear mask, moderation, rate limits and a mute.
+- **Any failure is a draft, never an error**: no saved session, muted, rate limited, offline, a card the server refuses, or
+  no time left in the call (Kino gives a provider 10 s) answers `{ status: "draft", ... }` and the person reviews it.
+- Never directly: on a Kino without `ctx` (before 0.9.84), from a plugin installed from a file or a URL (no address), or
+  from an 18+ plugin (which is never asked about either).
+- A share's link stays plain text (no page preview), and a card's https picture goes as it came (no thumbnail).
+
+### Sharing a card / Compartir una tarjeta
+
+`card` proposes a **share card**: a small card with your plugin's name, a title, an optional picture and description, and a
+button that reopens your plugin where it was (a `route` of your screen, or a `query`). It is kept as a draft like `share`;
+the card carries your plugin's real name and address, which Kino gives Kino Social (`ctx.caller`), never what you write.
+
+`card` propone una **tarjeta**: el nombre de tu plugin, un título, una imagen y una descripción opcionales y un botón que
+vuelve a abrir tu plugin donde estaba. También queda como borrador para que la persona la revise.
+
+```json
+"consumes": { "social": { "repo": "kinotvapp/kino-social", "door": "wall", "calls": ["share", "card"] } }
+```
+
+```js
+const r = await kino.plugins.call("social", "card", {
+  title: "Frieren",                                         // required, 1–120 characters
+  description: "Temporada 1 · 28 episodios",                // optional, up to 200 characters
+  image: "https://image.tmdb.org/t/p/w342/f.jpg",           // optional: https (up to 500 characters) or a data:image/jpeg|png
+                                                            //   base64 thumbnail, at most 16 KB and 200 px wide
+  route: { name: "item", argsJson: JSON.stringify({ id: "42" }) }, // optional: a route of your screen; args a plain object, ≤ 1 KB as JSON
+  query: "frieren",                                         // optional, up to 100 characters
+  text: "Mírala, está buenísima",                           // optional: the person's words, up to 500 characters
+  publish: false,                                           // optional: ask to skip the review (see Publish now)
+});
+// r = { status: "draft", draftId, pending }, or { status: "published", postId } for a plugin the person allowed
+```
+
+The route's name matches `^[A-Za-z0-9._~-]{1,64}$`; its `args` travel as `argsJson` (a JSON string of a plain object) because
+the door's types are closed. `title`, `description` and `query` are tidied to one line and cut to their limits, `text` too
+(500). An empty title, an image that is not `https` or a real PNG/JPEG thumbnail within the limits, or a malformed route
+fails with `provider_failed` (`bad_title`, `bad_image`, `bad_route` in Kino Social). `card` needs the `ctx` of Kino 0.9.84:
+on an older Kino it fails (`no_caller`), so fall back to `share`. A plugin marked 18+ cannot send cards (`adult_caller`).
+A plugin installed from a file or a URL has no repository address: its card shows, but its button cannot open it.
+The same card (same plugin, title and route) twice keeps one draft.
 
 ## What it asks for
 
@@ -114,6 +176,11 @@ Each shows its line on the install sheet and can be switched off in Ajustes (`co
 
 ## Changes
 
+- **0.9.8** — the `wall` door's `card` call: a plugin proposes a share card (title, picture, description, a route back to
+  it), kept as a draft stamped with the real calling plugin (`ctx.caller`, Kino 0.9.84). `share` names the real caller when
+  Kino tells it and takes `publish`. Both calls answer the door's `Answer` type. «Publicar ya»: a plugin the person
+  allowed (asked the first time they publish its `publish: true` draft; the synced setting «Plugins que publican directo»,
+  removable on the profile) posts directly; any failure keeps a draft.
 - **0.9.7** — the `wall` door of the plugin protocol: other plugins propose posts, kept as drafts the person reviews and
   publishes (bell notice, banner at the top of the feed). Kino 0.9.81 for the door; older Kinos ignore it.
 

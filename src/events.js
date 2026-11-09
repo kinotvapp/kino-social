@@ -11,12 +11,19 @@ import { titleHint } from "./titlelink.js";
 import { tidyLines } from "./lines.js";
 import { canPublish, cleanQuery, pickAttachment, postBody, recentTitles, searchTitles, withPoster } from "./attach.js";
 import { coinRefusal, coinsReady, coinsSwitchedOff, knownTotals, loadCoins, rememberTotal } from "./coins.js";
-import { draftById, readDrafts, removeDraft, reviewState } from "./wall.js";
+import { fullCardGo, goPluginReady, slimCard, utf8Length } from "./card.js";
+import { draftById, draftCard, draftExcerpt, readDrafts, removeDraft, reviewState } from "./wall.js";
+import { SETTING as DIRECT_SETTING, allowedPublishers, isAllowed, takeDirectWarning, withAllowed } from "./direct.js";
 
-/** The drafts other plugins proposed, as the feed's banner lists them (a few short fields each). */
-const draftsState = () => readDrafts().map((d) => ({ id: d.id, from: d.from || "", text: (d.text || d.link || "").slice(0, 140), titled: !!d.title }));
+/** The drafts other plugins proposed, as the feed's banner lists them (a few short fields each; never a card's image). */
+const draftsState = () => readDrafts().map((d) => ({ id: d.id, from: d.from || "", text: draftExcerpt(d).slice(0, 140), titled: !!d.title, carded: !!d.card }));
 
 const MAX_FEED = 80;
+// A community's feed and the posts that wait behind «N nuevas» hold less than the feed; with every list full of share
+// cards, `fitState` keeps the whole screen state under STATE_LINE, far from Kino's 64 KB (test/cards.test.mjs pins it).
+const MAX_CFEED = 30;
+const MAX_NEWER = 10;
+const FEED_PAGE = 20;
 const toast = ([es, en]) => ({ toast: es, toastEn: en });
 
 function failure(e) {
@@ -27,6 +34,8 @@ function failure(e) {
   if (code === "slug_taken") return toast(T.slugTaken);
   if (["bad_name", "bad_slug", "bad_description"].includes(code)) return toast(T.badCommunity);
   if (code === "not_member") return toast(T.notMember);
+  // A share card the server refuses (an 18+-looking title, a field out of rule): the composer keeps it and the words.
+  if (code === "bad_card") return toast(T.badCard);
   // Muted: the dialog says until when; what the person wrote stays in its field (inputs untouched).
   if (code === "muted") return { state: { mutedUntil: mutedUntil(e.mutedUntil) }, dialog: muteDialog(e.mutedUntil) };
   if (["no_identity", "unofficial", "device_taken", "too_many_devices"].includes(code)) return { state: { problem: code } };
@@ -176,6 +185,138 @@ async function giveCoin(state, postId) {
   }
 }
 
+/**
+ * The press of a share card whose button is an event: a plugin with no plain repo (installed from a file or a URL) or an
+ * older Kino, which would drop a go.plugin without a word, get a toast naming the plugin; a card whose route the state
+ * did not keep is read again from the server and opened from this answer to the person's press.
+ */
+async function cardTap(state, postId) {
+  const post = findPost(state, postId);
+  const c = post && slimCard(post.card);
+  if (!c) return null;
+  if (!c.g && !c.m) return toast(T.cannotOpen(c.n));
+  if (!goPluginReady()) return toast(T.updateKinoToOpen(c.n));
+  let fresh;
+  try {
+    fresh = await callFresh("/posts/" + encodeURIComponent(String(postId)), { fullCards: true });
+  } catch (e) {
+    // Deleted meanwhile: it says so; anything else is the usual answer (offline, rate limited...).
+    return e instanceof ApiError && e.status === 404 ? toast(T.cardPostGone) : failure(e);
+  }
+  const go = fullCardGo(fresh.card);
+  return go ? { go: { plugin: go } } : toast(T.cannotOpen(c.n));
+}
+
+/**
+ * Whether the event comes from the main feed: its route says so (the state's `view` may be stale after a system Back).
+ * The feed is every root that draws `view` (plugin.js `screen`): "main", and the route a notice opened the screen at
+ * ("draft"), which Kino keeps at the bottom of the stack for the whole session; only the pushed pages are not.
+ */
+const PAGE_VIEWS = ["me", "post", "user", "community"];
+const onMain = (route) => !!route && !PAGE_VIEWS.includes(route.name);
+
+/**
+ * The pages the person left: on the main feed (route `main`, nothing pushed over it) a community's feed, a person's posts
+ * and your profile are no longer on screen nor under it, so they leave the state (the next opening loads them again), and
+ * a page `view` left from a deep link or an opening goes back to "main". Kino's system Back pops a page without an event,
+ * so this runs on whatever event comes next on the feed (its own `tick` at the latest); only the route decides.
+ */
+const PAGE_KEYS = ["cfeed", "cnext", "community", "crequests", "user", "profile", "myActivity", "myPlugins"];
+function leftPages(s, route) {
+  if (!onMain(route)) return null;
+  const out = Object.fromEntries(PAGE_KEYS.filter((k) => s[k] !== undefined && s[k] !== null).map((k) => [k, null]));
+  if (PAGE_VIEWS.includes(s.view)) out.view = "main";
+  return Object.keys(out).length ? out : null;
+}
+
+// The whole state is kept under this line (Kino refuses a patch past 64 KB and the feed would stop updating). Only a
+// state crowded with share cards ever reaches it; what is shed first is what is not on screen.
+const STATE_LINE = 44 * 1024;
+const stateBytes = (s) => utf8Length(JSON.stringify(s));
+const mergeState = (s, patch) => {
+  const next = { ...s };
+  for (const [k, v] of Object.entries(patch)) if (v === null) delete next[k]; else next[k] = v;
+  return next;
+};
+
+/** The main feed cut to its first [n] items, its cursor moved to the oldest kept one. */
+function feedTo(feed, n) {
+  const kept = feed.slice(0, n);
+  const times = kept.map((i) => i.createdAt).filter(Number.isFinite);
+  return { feed: kept, ...(times.length ? { next: Math.min(...times) } : {}) };
+}
+
+/**
+ * The answer's patch, shedding what is off screen while the state it leaves would pass STATE_LINE: the posts waiting behind
+ * «N nuevas» (the next `tick` brings them back), then the end of the main feed when a page covers it (down to 40, then
+ * 20 posts; «Cargar más» reloads them), then the end of a community's feed when a page covers it (down to 10).
+ */
+function fitState(s, out, route) {
+  if (!out || !out.state) return out;
+  const patch = { ...out.state };
+  let merged = mergeState(s, patch);
+  if (stateBytes(merged) <= STATE_LINE) return out;
+  const top = route && route.name;
+  const covered = !onMain(route); // a page is over the feed
+  const steps = [
+    () => (merged.newer || []).length && { newer: [] },
+    () => covered && (merged.feed || []).length > 40 && feedTo(merged.feed, 40),
+    () => covered && (merged.feed || []).length > FEED_PAGE && feedTo(merged.feed, FEED_PAGE),
+    () => covered && top !== "community" && (merged.cfeed || []).length > 10 && (({ feed, next }) => ({ cfeed: feed, cnext: next }))(feedTo(merged.cfeed, 10)),
+  ];
+  for (const step of steps) {
+    const cut = step();
+    if (!cut) continue;
+    Object.assign(patch, cut);
+    merged = mergeState(merged, cut);
+    if (stateBytes(merged) <= STATE_LINE) break;
+  }
+  return { ...out, state: patch };
+}
+
+/**
+ * A direct post's moderation warning (direct.js keeps it: nobody was looking when it went out) shown with the next answer
+ * that can carry a dialog: the opening or the next press on the feed, never a `tick` (its dialog would be dropped), never
+ * over another dialog or a problem page. The mute it started comes in through `moderationState`.
+ */
+function withDirectWarning(event, out) {
+  if (event.name === "tick" || (event.name !== "open" && !onMain(event.route))) return out;
+  if (out && (out.dialog || (out.state && out.state.problem))) return out;
+  const m = takeDirectWarning();
+  if (!m) return out;
+  const answer = { moderation: m };
+  const warned = moderationDialog(answer);
+  if (!warned) return out;
+  return { ...(out || {}), state: { ...((out && out.state) || {}), ...moderationState(answer) }, dialog: warned };
+}
+
+export async function screenEvent(event) {
+  const s = event.state || {};
+  let out = withDirectWarning(event, await handleEvent(event));
+  const stale = leftPages(s, event.route);
+  if (stale) out = { ...(out || {}), state: { ...stale, ...((out && out.state) || {}) } };
+  return fitState(s, out, event.route);
+}
+
+/**
+ * The plugin to ask about after the person published draft [d]: `{ repo, name }` when the draft asked to go direct
+ * (`direct` is never set for an 18+ caller) from a plugin with an address that is not allowed yet; else null.
+ */
+function directAsk(d) {
+  const c = d && d.direct === true && d.caller;
+  if (!c || !c.repo || isAllowed(c.repo)) return null;
+  return { repo: c.repo, name: c.name || d.from || c.repo };
+}
+
+/** «¿Permitir que <plugin> publique directo en tu muro?» with Permitir / Solo esta vez. */
+const askDirectDialog = ({ repo, name }) => ({
+  title: T.allowDirect(name)[0], titleEn: T.allowDirect(name)[1], body: T.allowDirectBody[0], bodyEn: T.allowDirectBody[1],
+  buttons: [
+    { label: T.allowDirectYes[0], labelEn: T.allowDirectYes[1], event: "allowDirect", arg: repo, variant: "primary" },
+    { label: T.allowDirectOnce[0], labelEn: T.allowDirectOnce[1], variant: "text" },
+  ],
+});
+
 function patchFollow(state, userId, following) {
   const fix = (p) => (sameId(p.id, userId) ? { ...p, following } : p);
   const out = {};
@@ -189,13 +330,14 @@ function patchFollow(state, userId, following) {
   return out;
 }
 
-export async function screenEvent({ name, arg, value, state, route, device }) {
+// Every handler is awaited inside the try below (`return await`), so a rejection lands in `failure`, never out of here.
+async function handleEvent({ name, arg, value, state, route, device }) {
   const s = state || {};
   const inputs = s.inputs || {};
   try {
     switch (name) {
       case "open":
-        return open(s, route || { name: "main" });
+        return await open(s, route || { name: "main" });
       case "openProfile":
         // Your profile is a page of its own over the tabs (back arrow and the system back), never a tab: a TabBar can
         // only mark one of its own tabs, so a hidden one left «Feed» marked and a tap on it did nothing.
@@ -222,14 +364,15 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         // Nobody's press: a conditional GET of the first page; new posts wait behind «N nuevas» instead of moving the feed.
         // A mute that ran out unlocks the composer and the comment field without a press.
         if (s.mutedUntil && !mutedUntil(s.mutedUntil)) return { state: { mutedUntil: 0 } };
-        if (s.view !== "main" || !s.feed) return null;
+        // On the feed by its route (a system Back leaves `view` stale), or by `view` when Kino gave no route.
+        if (!(route ? onMain(route) && s.view !== "welcome" : s.view === "main") || !s.feed) return null;
         // A draft another plugin proposed while the screen was open shows up in the feed's banner.
         const drafts = draftsState();
         if (drafts.length !== (s.drafts || []).length) return { state: { drafts } };
         const page = await call("/feed?limit=20", { etag: s.feedTag }).catch(() => ({ notModified: true }));
         if (page.notModified) return null;
         const known = new Set([...(s.feed || []), ...(s.newer || [])].map((i) => i.type + ":" + i.id));
-        const newer = mergeById([...(s.newer || []), ...page.items.filter((i) => i.type !== "suggestions" && !known.has(i.type + ":" + i.id))]);
+        const newer = mergeById([...(s.newer || []), ...page.items.filter((i) => i.type !== "suggestions" && !known.has(i.type + ":" + i.id))]).slice(0, MAX_NEWER);
         // Counts (likes, comments) of what is on screen follow quietly.
         const fresh = new Map(page.items.map((i) => [i.type + ":" + i.id, i]));
         const feed = s.feed.map((i) => fresh.get(i.type + ":" + i.id) || i);
@@ -246,7 +389,7 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "moreCommunity": {
         if (!s.cnext || !s.community) return null;
         const page = await call(`/communities/${s.community.id}/feed?limit=20&before=${s.cnext}`);
-        return { state: { cfeed: mergeById([...(s.cfeed || []), ...page.items]).slice(-MAX_FEED), cnext: page.next, cloadingMore: false } };
+        return { state: { cfeed: mergeById([...(s.cfeed || []), ...page.items]).slice(-MAX_CFEED), cnext: page.next, cloadingMore: false } };
       }
       case "openCommunity":
         return { route: { push: "community", params: { id: String(arg) } }, state: { view: "community", ...(await loadCommunity(arg)) } };
@@ -306,6 +449,10 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         return { state: closedPicker(), focus: "openAttach" };
       case "clearAttach":
         return { state: { attach: null }, focus: "openAttach" };
+      // «Quitar tarjeta»: the post goes without the card, and is no longer that draft's review: the card draft stays in
+      // the banner until the person publishes it or discards it.
+      case "clearCard":
+        return { state: { attachCard: null, draftId: null }, focus: "openAttach" };
       // A draft another plugin proposed: into the composer (the person still presses Publicar), or away.
       case "reviewDraft": {
         const d = draftById(arg);
@@ -319,25 +466,42 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
       case "publish": {
         const values = (arguments[0] && arguments[0].values) || inputs;
         const raw = tidyLines(values.postText ?? inputs.postText);
-        const attach = s.attach ? await withPoster(s.attach) : null;
-        if (!canPublish(raw, attach)) return toast(T.needTextOrTitle);
+        // A share card is read whole from its stored draft (the state holds only its short fields, never its image).
+        let card = null;
+        if (s.attachCard) {
+          const d = draftById(s.attachCard.draftId);
+          if (!d || !d.card) return toast(T.draftGone);
+          card = draftCard(d);
+        }
+        const attach = s.attach && !card ? await withPoster(s.attach) : null;
+        if (!canPublish(raw, attach, card)) return toast(T.needTextOrTitle);
         const text = raw ? await clean(raw) : "";
         // The device reads the link (the server never fetches): a TMDB or IMDb title from Kino's TMDB, else the page's head.
-        // A title the person attached wins over any link, which then stays plain text: nothing to read.
-        const linkTitle = text && !attach ? await titleHint(text) : null;
-        const link = linkTitle || !text || attach ? null : await linkPreview(text);
-        // Written inside a community's page, it goes to that community and its feed; else to the general one.
-        const inCommunity = s.community && ((route && route.name === "community") || s.view === "community");
-        const json = postBody({ text, linkTitle, link, attach, communityId: inCommunity ? s.community.id : null });
+        // A title the person attached, or a card, wins over any link, which then stays plain text: nothing to read.
+        const linkTitle = text && !attach && !card ? await titleHint(text) : null;
+        const link = linkTitle || !text || attach || card ? null : await linkPreview(text);
+        // Written inside a community's page, it goes to that community and its feed; else to the general one. The route
+        // decides: after a system Back the state may still name the last community (and `view` with it).
+        const inCommunity = !!s.community && !!route && route.name === "community";
+        const json = postBody({ text, linkTitle, link, attach, card, communityId: inCommunity ? s.community.id : null });
         const post = await callFresh("/posts", { method: "POST", json });
         const placed = inCommunity
-          ? { cfeed: mergeById([post, ...(s.cfeed || [])]).slice(0, MAX_FEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } }
+          ? { cfeed: mergeById([post, ...(s.cfeed || [])]).slice(0, MAX_CFEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } }
           : { feed: mergeById([post, ...(s.feed || [])]).slice(0, MAX_FEED), tab: "feed" };
         const warned = moderationDialog(post);
+        // A draft that asked to go direct: its plugin may be allowed now (a moderation dialog wins; the ask waits for the next one).
+        const ask = warned || !s.draftId ? null : directAsk(draftById(s.draftId));
         // A reviewed draft is done once it is out.
         if (s.draftId) removeDraft(s.draftId);
-        return { state: { ...placed, ...moderationState(post), attach: null, draftId: null, drafts: draftsState(), ...closedPicker(), inputs: { postText: "", titleSearch: "" } },
-          ui: [{ close: "composer" }], ...(warned ? { dialog: warned } : toast(T.published)) };
+        return { state: { ...placed, ...moderationState(post), attach: null, attachCard: null, draftId: null, maybeSent: false, drafts: draftsState(), ...closedPicker(), inputs: { postText: "", titleSearch: "" },
+          ...(ask ? { askDirect: ask } : {}) },
+          ui: [{ close: "composer" }], ...(warned ? { dialog: warned } : ask ? { dialog: askDirectDialog(ask) } : toast(T.published)) };
+      }
+      // Permitir: the plugin joins the person's synced list of plugins that publish directly.
+      case "allowDirect": {
+        const ask = s.askDirect;
+        if (!ask || !ask.repo || String(arg || "").toLowerCase() !== String(ask.repo).toLowerCase()) return { state: { askDirect: null } };
+        return { config: { [DIRECT_SETTING]: withAllowed(allowedPublishers(), ask.repo, ask.name) }, state: { askDirect: null }, ...toast(T.allowed(ask.name)) };
       }
       case "like":
       case "unlike": {
@@ -345,7 +509,10 @@ export async function screenEvent({ name, arg, value, state, route, device }) {
         return { state: patchPost(s, arg, () => ({ likes: r.likes, liked: r.liked })) };
       }
       case "coin":
-        return giveCoin(s, arg);
+        return await giveCoin(s, arg);
+      // A share card's button when it could not carry the go.plugin itself.
+      case "cardTap":
+        return await cardTap(s, arg);
       case "loadCoins":
         return { state: { coins: await loadCoins() } };
       case "openPost": {

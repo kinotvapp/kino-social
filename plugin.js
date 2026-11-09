@@ -9,6 +9,7 @@ var T = {
   draftFrom: (who) => [`De ${who}`, `From ${who}`],
   draftFromUnknown: ["De otro plugin", "From another plugin"],
   draftWithTitle: ["Con un título adjunto", "With a title attached"],
+  draftWithCard: (from) => [`Con una tarjeta de ${from}`, `With a card from ${from}`],
   review: ["Revisar", "Review"],
   discard: ["Descartar", "Discard"],
   draftDiscarded: ["Borrador descartado", "Draft discarded"],
@@ -138,7 +139,17 @@ var T = {
     return t.year ? [`${t.year} · ${es}`, `${t.year} · ${en}`] : [es, en];
   },
   removeAttach: ["Quitar película o serie", "Remove movie or series"],
+  // A share card another plugin proposed, under the person's own words in the composer.
+  removeCard: ["Quitar tarjeta", "Remove card"],
+  badCard: ["Esta tarjeta no se puede publicar", "This card can't be posted"],
+  // A card's plugin when it has no name at all (the server needs one; stored as sent, so the ES word goes).
+  pluginFallback: ["Plugin", "Plugin"],
   openInKino: ["Ver en Kino", "Open in Kino"],
+  // A share card in the feed: its button opens the plugin that sent it (Kino 0.9.84's go.plugin).
+  openIn: (name) => [`Abrir en ${name}`, `Open in ${name}`],
+  updateKinoToOpen: (name) => [`Actualiza Kino para abrir esto en ${name}`, `Update Kino to open this in ${name}`],
+  cardPostGone: ["Esta publicación ya no está", "This post is gone"],
+  cannotOpen: (name) => [`${name} no se puede abrir desde aquí`, `${name} can't be opened from here`],
   needTextOrTitle: ["Escribe algo o adjunta una película o serie", "Write something or attach a movie or series"],
   // Moderation: a masked post or comment is a warning (strike); the third in 12 h mutes for 12 h.
   strikeWarning: (n, limit) => [
@@ -178,7 +189,18 @@ var T = {
   // The daily balance notice (the job, around 20:00) and its switch in the plugin's settings.
   coinNoticeTitle: (n) => [n === 1 ? "Tienes 1 kino" : `Tienes ${n} kinos`, n === 1 ? "You have 1 Kino" : `You have ${n} Kinos`],
   coinNoticeEarned: (n) => [n === 1 ? "Hoy ganaste 1 viendo" : `Hoy ganaste ${n} viendo`, n === 1 ? "You earned 1 today by watching" : `You earned ${n} today by watching`],
-  coinNoticeSpend: ["Regálalos a las publicaciones que te gusten", "Give them to the posts you like"]
+  coinNoticeSpend: ["Regálalos a las publicaciones que te gusten", "Give them to the posts you like"],
+  // «Publicar ya»: a plugin the person allows posts to their wall without the review (the manifest's directPublishers).
+  allowDirect: (name) => [`¿Permitir que ${name} publique directo en tu muro?`, `Allow ${name} to post straight to your wall?`],
+  allowDirectBody: [
+    "Lo próximo que comparta saldrá sin pasar por aquí. Puedes quitarlo en Plugins que publican directo, en tu perfil.",
+    "What it shares next goes out without coming here. You can remove it under Plugins that post directly, on your profile."
+  ],
+  allowDirectYes: ["Permitir", "Allow"],
+  allowDirectOnce: ["Solo esta vez", "Only this time"],
+  allowed: (name) => [`${name} ya puede publicar directo`, `${name} can now post directly`],
+  directTitle: ["Plugins que publican directo", "Plugins that post directly"],
+  maybeSent: ["Puede que ya se haya publicado; revisa tu muro", "It may already be on your wall; check it"]
 };
 function watchedLine(item) {
   if (item.kind === "series" && Number.isInteger(item.season) && Number.isInteger(item.episode)) {
@@ -287,6 +309,279 @@ async function balanceNotice(now = Date.now()) {
   return true;
 }
 
+// src/imagesize.js
+var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+var B64_INDEX = (() => {
+  const t = new Int16Array(128).fill(-1);
+  for (let i = 0; i < B64.length; i++) t[B64.charCodeAt(i)] = i;
+  return t;
+})();
+function decodeBase64(s) {
+  if (typeof s !== "string" || !s || s.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) return null;
+  const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+  const out = new Uint8Array(s.length / 4 * 3 - pad);
+  let o = 0;
+  for (let i = 0; i < s.length; i += 4) {
+    const a = B64_INDEX[s.charCodeAt(i)];
+    const b = B64_INDEX[s.charCodeAt(i + 1)];
+    const c = s[i + 2] === "=" ? 0 : B64_INDEX[s.charCodeAt(i + 2)];
+    const d = s[i + 3] === "=" ? 0 : B64_INDEX[s.charCodeAt(i + 3)];
+    const n = a << 18 | b << 12 | c << 6 | d;
+    if (o < out.length) out[o++] = n >> 16 & 255;
+    if (o < out.length) out[o++] = n >> 8 & 255;
+    if (o < out.length) out[o++] = n & 255;
+  }
+  return out;
+}
+var u16 = (b, i) => b[i] << 8 | b[i + 1];
+var u32 = (b, i) => (b[i] << 24 >>> 0) + (b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3]);
+var PNG_SIG = [137, 80, 78, 71, 13, 10, 26, 10];
+var IHDR = [0, 0, 0, 13, 73, 72, 68, 82];
+function imageSize(bytes) {
+  if (!bytes || typeof bytes.length !== "number") return null;
+  const b = bytes;
+  const n = b.length;
+  if (n >= 8 && PNG_SIG.every((v, i) => b[i] === v)) {
+    if (n < 24 || !IHDR.every((v, i) => b[8 + i] === v)) return null;
+    const width = u32(b, 16);
+    const height = u32(b, 20);
+    return width && height ? { mime: "image/png", width, height } : null;
+  }
+  if (n >= 2 && b[0] === 255 && b[1] === 216) {
+    let i = 2;
+    while (i + 4 <= n) {
+      if (b[i] !== 255) return null;
+      const marker = b[i + 1];
+      if (marker === 255) {
+        i += 1;
+        continue;
+      }
+      if (marker === 1 || marker === 216 || marker >= 208 && marker <= 215) {
+        i += 2;
+        continue;
+      }
+      if (marker === 217 || marker === 218) return null;
+      const length = u16(b, i + 2);
+      if (marker >= 192 && marker <= 207 && marker !== 196 && marker !== 200 && marker !== 204) {
+        if (i + 9 > n) return null;
+        const height = u16(b, i + 5);
+        const width = u16(b, i + 7);
+        return width && height ? { mime: "image/jpeg", width, height } : null;
+      }
+      if (length < 2) return null;
+      i += 2 + length;
+    }
+  }
+  return null;
+}
+
+// src/card.js
+var MAX = { title: 120, description: 200, query: 100, text: 500, image: 500, imageBytes: 16384, imageWidth: 200, argsBytes: 1024 };
+var MAX_NAME = 60;
+var MAX_REPO = 200;
+var MAX_B64 = Math.ceil(MAX.imageBytes / 3) * 4;
+var REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}(\/[A-Za-z0-9._-]{1,100})*$/;
+var ROUTE = /^[A-Za-z0-9._~-]{1,64}$/;
+var HTTPS_IMAGE = /^https:\/\/[^/\s@]+\.[^/\s@]+\S*$/;
+var DATA_IMAGE = /^data:image\/(jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/;
+var ok = (v) => v !== void 0 && v !== null;
+var wellFormed = (s) => s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+var oneLine = (s) => wellFormed(String(s)).replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+var tidy = (s) => wellFormed(String(s)).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").replace(/\n{3,}/g, "\n\n").trim();
+function cut(s, n) {
+  if (s.length <= n) return s;
+  const c = s.charCodeAt(n - 1);
+  return (c >= 55296 && c <= 56319 ? s.slice(0, n - 1) : s.slice(0, n)).trimEnd();
+}
+function plainRepo(repo) {
+  if (typeof repo !== "string") return null;
+  const at = repo.indexOf("@");
+  const plain = at >= 0 ? repo.slice(0, at) : repo;
+  if (plain.length > MAX_REPO || plain.includes("://") || !REPO.test(plain)) return null;
+  if (plain.split("/").some((seg) => seg === "." || seg === "..")) return null;
+  return plain;
+}
+function callerOf(ctx) {
+  const c = ctx && ctx.caller;
+  if (!c || typeof c !== "object") return null;
+  const id = String(c.id || "");
+  const name = cut(oneLine(c.name || ""), MAX_NAME) || cut(id, MAX_NAME);
+  return { id, repo: plainRepo(c.repo), name, adult: c.adult !== false };
+}
+function checkImage(v) {
+  const s = String(v);
+  if (s.startsWith("data:")) {
+    const m = s.length <= MAX_B64 + 40 ? DATA_IMAGE.exec(s) : null;
+    if (!m || m[2].length > MAX_B64) return null;
+    const bytes = decodeBase64(m[2]);
+    const size = bytes && imageSize(bytes);
+    if (!size || size.mime !== "image/" + m[1] || bytes.length > MAX.imageBytes || size.width > MAX.imageWidth) return null;
+    return s;
+  }
+  return s.length <= MAX.image && HTTPS_IMAGE.test(s) && !PY_SPACE.test(s) && !adultHost(s) ? s : null;
+}
+var PY_SPACE = /[\u001C-\u001F\u0085]/;
+var ADULT_DOMAINS = ["pornhub.com", "xvideos.com", "xnxx.com", "xhamster.com", "onlyfans.com", "redtube.com", "youporn.com", "chaturbate.com"];
+function adultHost(url) {
+  const netloc = url.slice("https://".length).split(/[/?#]/)[0];
+  const host = netloc.replace(/:\d*$/, "").toLowerCase().replace(/\.+$/, "");
+  return ADULT_DOMAINS.some((d) => host === d || host.endsWith("." + d));
+}
+function utf8Length(s) {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 128) n += 1;
+    else if (c < 2048) n += 2;
+    else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+function storable(v) {
+  if (typeof v === "string") return !v.includes("\0") && wellFormed(v) === v;
+  if (Array.isArray(v)) return v.every(storable);
+  if (v && typeof v === "object") return Object.keys(v).every((k) => storable(k) && storable(v[k]));
+  return true;
+}
+function checkRoute(r) {
+  if (!r || typeof r !== "object" || typeof r.name !== "string" || !ROUTE.test(r.name)) return null;
+  let args = {};
+  if (ok(r.argsJson)) {
+    if (String(r.argsJson).length > MAX.argsBytes) return null;
+    try {
+      args = JSON.parse(String(r.argsJson));
+    } catch (_) {
+      return null;
+    }
+    if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+  }
+  if (utf8Length(JSON.stringify(args)) > MAX.argsBytes || !storable(args)) return null;
+  return { name: r.name, args };
+}
+function checkCard(arg) {
+  const a = arg && typeof arg === "object" ? arg : {};
+  const title = ok(a.title) ? cut(oneLine(a.title), MAX.title) : "";
+  if (!title) return "bad_title";
+  const card = { title };
+  const description = ok(a.description) ? cut(oneLine(a.description), MAX.description) : "";
+  if (description) card.description = description;
+  if (ok(a.image)) {
+    const image = checkImage(a.image);
+    if (!image) return "bad_image";
+    card.image = image;
+  }
+  if (ok(a.route)) {
+    const route = checkRoute(a.route);
+    if (!route) return "bad_route";
+    card.route = route;
+  }
+  const query = ok(a.query) ? cut(oneLine(a.query), MAX.query) : "";
+  if (query) card.query = query;
+  const text = ok(a.text) ? cut(tidy(a.text), MAX.text) : "";
+  return { card, text };
+}
+var CARD_STATE_BYTES = 280;
+var SLIM = { name: 48, title: 150, go: 128, description: 100 };
+var MEDIA = /^\/media\/[A-Za-z0-9_-]{1,128}$/;
+var sizeOf = (v) => utf8Length(JSON.stringify(v));
+var jsonBytes = (s) => sizeOf(s) - 2;
+function cutBytes(s, n) {
+  if (jsonBytes(s) <= n) return s;
+  let out = "";
+  let used = 0;
+  for (const ch of s) {
+    const b = jsonBytes(ch);
+    if (used + b > n) break;
+    out += ch;
+    used += b;
+  }
+  return out.trimEnd();
+}
+var plainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+function goPluginReady() {
+  const k = typeof kino === "object" && kino ? kino : null;
+  return !!k && typeof k.image === "object" && k.image !== null && typeof k.image.thumbnail === "function";
+}
+function cardImageUrl(image) {
+  if (typeof image !== "string") return void 0;
+  if (MEDIA.test(image)) return BASE + image;
+  return image.length <= MAX.image && HTTPS_IMAGE.test(image) ? image : void 0;
+}
+function goOf(card) {
+  const repo = plainRepo(card.plugin && card.plugin.repo);
+  if (!repo || repo !== card.plugin.repo) return null;
+  const go = { repo };
+  const route = card.route;
+  if (route && typeof route.name === "string" && ROUTE.test(route.name)) {
+    go.route = route.name;
+    if (plainObject(route.args) && Object.keys(route.args).length) go.args = route.args;
+  }
+  const query = cut(oneLine(card.query || card.title || ""), MAX.query);
+  if (query) go.query = query;
+  return go;
+}
+function slimCard(card) {
+  if (!plainObject(card)) return null;
+  if (typeof card.n === "string" && typeof card.t === "string" && !("plugin" in card)) return card;
+  if (!plainObject(card.plugin) || typeof card.title !== "string") return null;
+  const name = cutBytes(oneLine(card.plugin && card.plugin.name || ""), SLIM.name) || T.pluginFallback[0];
+  const out = { n: name, t: cutBytes(oneLine(card.title || ""), SLIM.title) };
+  const fits = (extra) => sizeOf({ ...out, ...extra }) <= CARD_STATE_BYTES;
+  const image = cardImageUrl(card.image) && card.image;
+  if (image && fits({ i: image })) out.i = image;
+  const go = goOf(card);
+  let g = null;
+  if (go) {
+    g = { r: go.repo };
+    if (go.route) g.o = go.route;
+    if (go.args) g.a = go.args;
+    if (go.query && go.query !== cut(out.t, MAX.query)) g.q = go.query;
+    if (sizeOf({ g }) <= SLIM.go && fits({ g })) out.g = g;
+  }
+  const desc = card.description ? cut(oneLine(card.description), SLIM.description) : "";
+  const room = CARD_STATE_BYTES - sizeOf({ ...out, d: "", ...g && !out.g ? { m: 1 } : {} });
+  const d = desc && room >= 16 ? shorten(desc, room) : "";
+  if (d) out.d = d;
+  if (g && !out.g) {
+    if (fits({ g })) out.g = g;
+    else out.m = 1;
+  }
+  return out;
+}
+function shorten(s, n) {
+  if (jsonBytes(s) <= n) return s;
+  const head = cutBytes(s, n - 3);
+  const word = head.replace(/\s+\S*$/, "");
+  return (word.length >= head.length / 2 ? word : head).replace(/[\s.,;:]+$/, "") + "…";
+}
+function slimCards(json) {
+  const visit = (o) => {
+    if (!o || typeof o !== "object") return;
+    if (o.type === "post" && o.card) o.card = slimCard(o.card);
+    if (Array.isArray(o.items)) o.items.forEach(visit);
+    if (Array.isArray(o.posts)) o.posts.forEach(visit);
+    if (o.post) visit(o.post);
+  };
+  visit(json);
+  return json;
+}
+function goOfSlim(c) {
+  if (!c || !c.g) return null;
+  const go = { repo: c.g.r };
+  if (c.g.o) go.route = c.g.o;
+  if (c.g.a) go.args = c.g.a;
+  go.query = c.g.q || cut(c.t, MAX.query);
+  return go;
+}
+function cardGo(post2) {
+  const go = goPluginReady() ? goOfSlim(slimCard(post2.card)) : null;
+  return go ? { go: { plugin: go } } : { event: "cardTap", arg: String(post2.id) };
+}
+var fullCardGo = (card) => plainObject(card) && card.plugin ? goOf(card) : null;
+
 // src/attach.js
 var IMAGES = "https://image.tmdb.org/t/p/w342";
 var MAX_RESULTS = 10;
@@ -364,8 +659,9 @@ function pickAttachment(key, ...lists) {
   }
   return null;
 }
-var canPublish = (text, attach) => String(text || "").trim().length > 0 || validAttachment(attach);
-function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null, season = null, episode = null }) {
+var canPublish = (text, attach, card = null) => String(text || "").trim().length > 0 || validAttachment(attach) || !!card;
+function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null, season = null, episode = null, card = null }) {
+  if (card) return { text, card, ...communityId ? { communityId: Number(communityId) } : {} };
   const picked = validAttachment(attach) ? attach : null;
   let title = picked || linkTitle;
   if (title && title.kind === "series" && Number.isInteger(season) && season > 0 && Number.isInteger(episode) && episode > 0) {
@@ -516,14 +812,14 @@ async function login() {
   kino.storage.set(SESSION_KEY, body.session, { ttlMs: SESSION_TTL_MS });
   return body.user;
 }
-async function call(path, { method = "GET", json, etag } = {}) {
+async function call(path, { method = "GET", json, etag, fullCards = false, timeoutMs = 15e3, posters = true } = {}) {
   const session = savedSession();
   if (!session) throw new ApiError("no_session", 401);
   const headers = { authorization: "Bearer " + session };
   if (etag) headers["if-none-match"] = etag;
   let r;
   try {
-    r = await kino.fetch(BASE + path, { method, headers, body: json === void 0 ? void 0 : { json }, timeoutMs: 15e3 });
+    r = await kino.fetch(BASE + path, { method, headers, body: json === void 0 ? void 0 : { json }, timeoutMs });
   } catch (_) {
     throw new ApiError("offline", 0);
   }
@@ -546,7 +842,8 @@ async function call(path, { method = "GET", json, etag } = {}) {
   if (r.status === 409) throw new ApiError(body.error || "conflict", 409);
   if (r.status === 400) throw new ApiError(body.error || "bad_request", 400);
   if (!r.ok) throw new ApiError("offline", r.status);
-  return { ...await fillPosters(body), etag: r.headers.etag };
+  const filled = posters ? await fillPosters(body) : body;
+  return { ...fullCards ? filled : slimCards(filled), etag: r.headers.etag };
 }
 async function callFresh(path, options) {
   try {
@@ -674,1487 +971,10 @@ async function postNotices() {
   return posted;
 }
 
-// src/wall.js
-var DRAFTS_KEY = "wallDrafts1";
-var MAX_DRAFTS = 5;
-var MAX_TEXT = 500;
-var MAX_LINK = 500;
-var MAX_FROM = 40;
-var DRAFT_TTL_MS = 14 * 24 * 3600 * 1e3;
-var ok = (v) => v !== void 0 && v !== null;
-var tidy = (s) => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").replace(/\n{3,}/g, "\n\n").trim();
-function cleanLink(v) {
-  if (!ok(v)) return null;
-  const s = String(v).trim();
-  if (s.length > MAX_LINK) return null;
-  let u;
-  try {
-    u = new URL(s);
-  } catch (_) {
-    return null;
-  }
-  if (u.protocol !== "https:" || !u.hostname.includes(".") || u.username || u.password) return null;
-  return u.toString();
-}
-function checkShare(arg) {
-  const a = arg && typeof arg === "object" ? arg : {};
-  const text = ok(a.text) ? tidy(a.text).slice(0, MAX_TEXT) : "";
-  let title = null;
-  if (ok(a.title)) {
-    const t = a.title;
-    const tmdb = Number(t.tmdb);
-    if (t.kind !== "movie" && t.kind !== "series" || !Number.isInteger(tmdb) || tmdb <= 0 || tmdb >= 1e9) return "bad_title";
-    title = { kind: t.kind, tmdb };
-    if (t.kind === "series" && Number.isInteger(t.season) && t.season > 0 && Number.isInteger(t.episode) && t.episode > 0) {
-      title.season = t.season;
-      title.episode = t.episode;
-    }
-  }
-  const link = ok(a.link) ? cleanLink(a.link) : null;
-  if (ok(a.link) && !link) return "bad_link";
-  const from = ok(a.from) ? tidy(a.from).replace(/\s+/g, " ").slice(0, MAX_FROM) : "";
-  if (!text && !title && !link) return "empty";
-  return { text, title, link, from };
-}
-function readDrafts(now = Date.now()) {
-  let list;
-  try {
-    list = JSON.parse(kino.storage.get(DRAFTS_KEY) || "[]");
-  } catch (_) {
-    list = [];
-  }
-  return (Array.isArray(list) ? list : []).filter((d) => d && typeof d.id === "string" && now - Number(d.at || 0) < DRAFT_TTL_MS);
-}
-function writeDrafts(list) {
-  try {
-    kino.storage.set(DRAFTS_KEY, JSON.stringify(list.slice(0, MAX_DRAFTS)));
-  } catch (_) {
-  }
-}
-var draftById = (id) => readDrafts().find((d) => d.id === String(id)) || null;
-function removeDraft(id) {
-  writeDrafts(readDrafts().filter((d) => d.id !== String(id)));
-}
-function markNoticed(ids) {
-  const set = new Set(ids);
-  writeDrafts(readDrafts().map((d) => set.has(d.id) ? { ...d, noticed: true } : d));
-}
-var newId = (now) => now.toString(36) + Math.floor(Math.random() * 1e6).toString(36);
-async function proto_wall_share(arg) {
-  await null;
-  const share = checkShare(arg);
-  if (typeof share === "string") throw new Error(share);
-  const now = Date.now();
-  const same = (d) => d.text === share.text && d.link === share.link && JSON.stringify(d.title) === JSON.stringify(share.title);
-  const kept = readDrafts(now);
-  const twin = kept.find(same);
-  const draft = twin || { id: newId(now), at: now, ...share };
-  writeDrafts([draft, ...kept.filter((d) => d.id !== draft.id)]);
-  return { status: "draft", draftId: draft.id, pending: Math.min(kept.length + (twin ? 0 : 1), MAX_DRAFTS) };
-}
-function draftNotice(d) {
-  const who = d.from || "";
-  const excerpt = (d.text || d.link || "").slice(0, 120);
-  return {
-    id: "dr" + d.id,
-    title: who ? `${who} quiere publicar en tu muro` : "Tienes una publicación por revisar",
-    titleEn: who ? `${who} wants to post on your wall` : "You have a post to review",
-    text: excerpt ? excerpt : "Revísala y publícala si quieres",
-    textEn: excerpt ? excerpt : "Review it and post it if you like",
-    go: { screen: { route: "draft", args: { id: d.id } } }
-  };
-}
-async function postDraftNotices() {
-  if (typeof kino.notifications !== "object") return 0;
-  const fresh = readDrafts().filter((d) => !d.noticed).reverse();
-  const done = [];
-  for (const d of fresh) {
-    try {
-      await kino.notifications.post(draftNotice(d));
-    } catch (_) {
-      break;
-    }
-    done.push(d.id);
-  }
-  if (done.length) markNoticed(done);
-  return done.length;
-}
-async function reviewState(d) {
-  let attach = null;
-  if (d.title && typeof kino.tmdb === "function") {
-    try {
-      const info = await kino.tmdb((d.title.kind === "movie" ? "/movie/" : "/tv/") + d.title.tmdb, { language: "es" });
-      attach = fromTmdb(info && { ...info, id: d.title.tmdb }, d.title.kind);
-      if (attach) attach = await withPoster(attach);
-      if (attach && d.title.season && d.title.episode) attach = { ...attach, season: d.title.season, episode: d.title.episode };
-    } catch (_) {
-      attach = null;
-    }
-  }
-  const text = [d.text, d.link && !(d.text || "").includes(d.link) ? d.link : ""].filter(Boolean).join("\n").slice(0, MAX_TEXT);
-  return {
-    state: { attach, draftId: d.id, picking: false, inputs: { postText: text, titleSearch: "" } },
-    ui: [{ open: "composer" }]
-  };
-}
-
-// src/ui/kit.js
-var isTv = (ctx) => ctx.device === "tv";
-var barPadding = (ctx) => isTv(ctx) ? { padding: { x: 24, y: 12 } } : {};
-var Txt = ([es, en], props = {}) => ({ type: "Text", text: es, textEn: en, ...props });
-var Raw = (text, props = {}) => ({ type: "Text", text, textEn: text, ...props });
-var AVATAR_COLORS = ["primaryContainer", "secondary", "primary"];
-function Avatar(user, radius = 20, props = {}) {
-  const letter = (String(user.name || "?").trim().replace(/^@/, "")[0] || "?").toUpperCase();
-  return {
-    type: "CircleAvatar",
-    text: letter,
-    textEn: letter,
-    radius,
-    backgroundColor: AVATAR_COLORS[Math.abs(Number(user.id) || 0) % AVATAR_COLORS.length],
-    labelText: user.name,
-    labelTextEn: user.name,
-    ...props
-  };
-}
-function NameBlock(user, extra = [], { time } = {}) {
-  const meta = [
-    ...user.handle ? [Raw("@" + user.handle, { style: "caption", color: "muted", maxLines: 1 })] : [],
-    ...user.handle && time ? [Raw("·", { style: "caption", color: "muted" })] : [],
-    ...time ? [{ type: "Text", time, style: "caption", color: "muted" }] : []
-  ];
-  return {
-    type: "Column",
-    flex: 1,
-    gap: 0,
-    children: [
-      Raw(user.name || "", { style: "h5", bold: true, maxLines: 1 }),
-      ...meta.length ? [{ type: "Row", gap: 4, crossAxisAlignment: "center", children: meta }] : [],
-      ...extra
-    ]
-  };
-}
-function Tag([es, en], icon, props = {}) {
-  return {
-    type: "Row",
-    gap: 4,
-    crossAxisAlignment: "center",
-    color: "primaryContainer",
-    borderRadius: "full",
-    padding: { x: 8, y: 2 },
-    children: [{ type: "Icon", name: icon }, { type: "Text", text: es, textEn: en, style: "caption" }],
-    ...props
-  };
-}
-var Button = (label2, onPressed, props = {}) => ({ type: "ElevatedButton", labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
-var TextBtn = (label2, onPressed, props = {}) => ({ type: "TextButton", labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
-var IconBtn = (icon, label2, onPressed, props = {}) => ({ type: "IconButton", icon, labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
-var pagePadding = { compact: { x: 12, y: 12 }, medium: { x: 24, y: 12 }, expanded: { x: 32, y: 16 } };
-var count = (n) => n > 999 ? Math.floor(n / 100) / 10 + "k" : String(n);
-
-// src/moderation.js
-var LIMIT = 3;
-function mutedUntil(until, now = Date.now()) {
-  const n = Number(until);
-  return Number.isInteger(n) && n > now ? n : 0;
-}
-function muteLine(until, props = {}) {
-  const [es, en] = T.mutedUntilLine;
-  return { type: "Text", text: es, textEn: en, time: Number(until), timeFormat: "clock", style: "caption", color: "error", ...props };
-}
-var okButton = () => ({ label: T.ok[0], labelEn: T.ok[1], variant: "primary" });
-function muteDialog(until) {
-  const [es, en] = T.mutedUntilDialog;
-  return {
-    body: [
-      { type: "Text", text: T.mutedStarted[0], textEn: T.mutedStarted[1] },
-      { type: "Text", text: es, textEn: en, time: Number(until), timeFormat: "clock" }
-    ],
-    buttons: [okButton()]
-  };
-}
-function moderationDialog(response) {
-  const m = response && response.moderation;
-  if (!m || typeof m !== "object") return null;
-  if (Number.isInteger(m.mutedUntil) && m.mutedUntil > 0) return muteDialog(m.mutedUntil);
-  const limit = Number.isInteger(m.limit) && m.limit > 0 ? m.limit : LIMIT;
-  const n = Number.isInteger(m.strikes) && m.strikes > 0 ? Math.min(m.strikes, limit) : 1;
-  const [es, en] = T.strikeWarning(n, limit);
-  return { body: es, bodyEn: en, buttons: [okButton()] };
-}
-function moderationToast(response) {
-  const m = response && response.moderation;
-  if (!m || typeof m !== "object") return null;
-  return mutedUntil(m.mutedUntil) ? T.panelMutedToast : T.panelOffensiveToast;
-}
-function moderationState(response, now = Date.now()) {
-  const m = response && response.moderation;
-  const until = m && mutedUntil(m.mutedUntil, now);
-  return until ? { mutedUntil: until } : {};
-}
-
-// src/ui/cards.js
-function authorRow(post2, ctx, me, pfx) {
-  const mine = me && post2.user.id === me.id;
-  return {
-    type: "Row",
-    gap: 12,
-    crossAxisAlignment: "center",
-    children: [
-      { type: "Stack", key: `${pfx}av-${post2.type}-${post2.id}`, onTap: { event: "openUser", arg: String(post2.user.id) }, children: [Avatar(post2.user)] },
-      NameBlock(
-        post2.user,
-        post2.community && String(post2.community.id) !== String(ctx.community) ? [Txt([`en ${post2.community.name}`, `in ${post2.community.name}`], { style: "caption", color: "primary", maxLines: 1 })] : [],
-        { time: post2.createdAt }
-      ),
-      ...mine && !isTv(ctx) ? [IconBtn("more_vert", T.postMenu, { event: "postMenu", arg: String(post2.id) }, { key: pfx + "menu-" + post2.id })] : []
-    ]
-  };
-}
-function linkCard(post2, ctx, pfx) {
-  const link = post2.link;
-  if (!link) return null;
-  const host = (link.url.match(/^https?:\/\/([^/?#]+)/i) || [])[1] || link.url;
-  const https = /^https:\/\//i.test(link.url);
-  if (link.tmdb && link.title) {
-    const open2 = { go: { titleByIds: { tmdb: link.tmdb.id, kind: link.tmdb.kind, title: link.title.slice(0, 120) } } };
-    const year = /^\d{4}$/.test(String(link.desc || "")) ? Number(link.desc) : void 0;
-    return {
-      type: "Card",
-      key: pfx + "link-" + post2.id,
-      variant: "outlined",
-      padding: 12,
-      onTap: open2,
-      children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-        {
-          type: "Image",
-          width: { compact: 64, expanded: 80 },
-          aspect: "2:3",
-          borderRadius: "small",
-          alt: link.title,
-          altEn: link.title,
-          ...link.image ? { url: link.image } : {},
-          fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: link.tmdb.kind === "movie" ? "movie" : "tv", margin: 12 }] }
-        },
-        { type: "Column", flex: 1, gap: 4, children: [
-          Raw(link.title, { style: "h5", bold: true, maxLines: 2 }),
-          year || !link.desc ? Txt(T.titleLine({ kind: link.tmdb.kind, year }), { style: "caption", color: "muted" }) : Raw(link.desc, { style: "caption", color: "muted" }),
-          { type: "Row", children: [{
-            type: "Button",
-            variant: "secondary",
-            key: pfx + "open-" + post2.id,
-            icon: "play",
-            labelText: T.openInKino[0],
-            labelTextEn: T.openInKino[1],
-            onPressed: open2
-          }] }
-        ] }
-      ] }]
-    };
-  }
-  const tap = https && !isTv(ctx) ? { go: { url: { href: link.url, title: (link.title || host).slice(0, 60) } } } : void 0;
-  if (!link.title) {
-    return {
-      type: "Card",
-      key: pfx + "link-" + post2.id,
-      variant: "outlined",
-      padding: 12,
-      onTap: tap,
-      children: [{ type: "Row", gap: 8, crossAxisAlignment: "center", children: [{ type: "Icon", name: "link", color: "primary" }, Raw(host, { color: "primary", maxLines: 1, flex: 1 })] }]
-    };
-  }
-  return {
-    type: "Card",
-    key: pfx + "link-" + post2.id,
-    variant: "outlined",
-    flush: true,
-    onTap: tap,
-    children: [
-      ...link.image ? [{
-        type: "Image",
-        url: link.image,
-        aspect: "16:9",
-        alt: link.title,
-        altEn: link.title,
-        fallback: { type: "Stack", color: "surfaceVariant", children: [{ type: "Icon", name: "link", margin: 16 }] }
-      }] : [],
-      { type: "Column", padding: 12, gap: 4, children: [
-        Raw((link.site || host).toUpperCase(), { style: "label", color: "muted", maxLines: 1 }),
-        Raw(link.title, { style: "h5", bold: true, maxLines: 2 }),
-        ...link.desc ? [Raw(link.desc, { style: "caption", color: "muted", maxLines: 2 })] : []
-      ] }
-    ]
-  };
-}
-function coinable(post2, ctx, me) {
-  return !!ctx.coins && !!(post2.user && post2.user.coinsAccount) && !(me && String(post2.user.id) === String(me.id));
-}
-var coinTotal = (post2, ctx) => {
-  const n = ctx.coinTotals && ctx.coinTotals[String(post2.id)];
-  return Number.isFinite(n) && n > 0 ? n : void 0;
-};
-function coinButton(post2, ctx, pfx) {
-  const total = coinTotal(post2, ctx);
-  return {
-    type: "TextButton",
-    key: pfx + "coin-" + post2.id,
-    icon: "star",
-    color: "muted",
-    labelText: total ? count(total) : T.coinShort[0],
-    labelTextEn: total ? count(total) : T.coinShort[1],
-    tooltip: T.giveCoin[0],
-    tooltipEn: T.giveCoin[1],
-    onPressed: { event: "coin", arg: String(post2.id) }
-  };
-}
-function actionsRow(post2, ctx, pfx, full, me) {
-  const likeLabel = post2.liked ? ["Ya no me gusta", "Unlike"] : ["Me gusta", "Like"];
-  return {
-    type: "Row",
-    gap: 4,
-    crossAxisAlignment: "center",
-    children: [
-      {
-        type: "TextButton",
-        key: pfx + "like-" + post2.id,
-        icon: "heart",
-        labelText: post2.likes ? count(post2.likes) : likeLabel[0],
-        labelTextEn: post2.likes ? count(post2.likes) : likeLabel[1],
-        selected: !!post2.liked,
-        color: post2.liked ? "primary" : "muted",
-        tooltip: likeLabel[0],
-        tooltipEn: likeLabel[1],
-        onPressed: { event: post2.liked ? "unlike" : "like", arg: String(post2.id) }
-      },
-      ...coinable(post2, ctx, me) ? [coinButton(post2, ctx, pfx)] : [],
-      ...full ? [] : [{
-        type: "TextButton",
-        key: pfx + "comments-" + post2.id,
-        color: "muted",
-        labelText: post2.comments ? `${count(post2.comments)} ${post2.comments === 1 ? "comentario" : "comentarios"}` : T.comment[0],
-        labelTextEn: post2.comments ? `${count(post2.comments)} ${post2.comments === 1 ? "comment" : "comments"}` : T.comment[1],
-        onPressed: { event: "openPost", arg: String(post2.id) }
-      }]
-    ]
-  };
-}
-function postCard(post2, ctx, me, { selected = false, full = false } = {}) {
-  const tv = isTv(ctx);
-  const pfx = full ? "t-" : "";
-  return {
-    type: "Card",
-    key: pfx + "post-" + post2.id,
-    padding: { x: 16, y: 12 },
-    gap: 12,
-    elevation: 1,
-    // On the TV the whole card is one stop: OK opens it beside the feed (its likes and comments live there).
-    ...tv && !full ? { onTap: { event: "openPost", arg: String(post2.id) }, selected } : {},
-    children: [
-      authorRow(post2, ctx, me, pfx),
-      // The text as written, line breaks included (a post with an attached title may have none).
-      ...post2.text ? [Raw(post2.text, { maxLines: full ? void 0 : tv ? 4 : 12 })] : post2.link && post2.link.tmdb ? [Txt(likedLine(post2), { maxLines: full ? void 0 : 2 })] : [],
-      ...post2.link ? [linkCard(post2, ctx, pfx)] : [],
-      ...!tv || full ? [actionsRow(post2, ctx, pfx, full, me)] : [{ type: "Row", gap: 16, children: [
-        { type: "Row", gap: 4, crossAxisAlignment: "center", children: [{ type: "Icon", name: "heart", color: post2.liked ? "error" : "muted" }, Raw(count(post2.likes || 0), { style: "caption", color: "muted" })] },
-        // The TV only shows a known coin total, like the likes: giving happens in the open post beside the feed.
-        ...coinable(post2, ctx, me) && coinTotal(post2, ctx) ? [{
-          type: "Row",
-          key: "coinTotal-" + post2.id,
-          gap: 4,
-          crossAxisAlignment: "center",
-          children: [{ type: "Icon", name: "star", color: "muted" }, Raw(count(coinTotal(post2, ctx)), { style: "caption", color: "muted" })]
-        }] : [],
-        ...post2.comments ? [Txt([`${count(post2.comments)} ${post2.comments === 1 ? "comentario" : "comentarios"}`, `${count(post2.comments)} ${post2.comments === 1 ? "comment" : "comments"}`], { style: "caption", color: "muted" })] : []
-      ] }]
-    ]
-  };
-}
-function activityCard(item) {
-  const line = watchedLine(item);
-  const many = item.episodes > 1 ? [` · ${item.episodes} episodios`, ` · ${item.episodes} episodes`] : ["", ""];
-  const open2 = { go: { titleByIds: { tmdb: item.tmdbId, kind: item.kind, title: item.title.slice(0, 120) } } };
-  if (item.still) {
-    return {
-      type: "Card",
-      key: "act-" + item.id,
-      flush: true,
-      elevation: 1,
-      onTap: open2,
-      children: [
-        { type: "Row", gap: 8, crossAxisAlignment: "center", padding: { x: 16, y: 12 }, children: [
-          Avatar(item.user, 16),
-          { type: "Column", flex: 1, gap: 0, children: [
-            Raw(item.user.name, { style: "label", bold: true, maxLines: 1 }),
-            Txt([line[0] + many[0], line[1] + many[1]], { style: "caption", color: "muted", maxLines: 1 })
-          ] },
-          { type: "Text", time: item.createdAt, style: "caption", color: "muted" }
-        ] },
-        {
-          type: "Image",
-          url: item.still,
-          aspect: "16:9",
-          alt: item.episodeTitle || item.title,
-          altEn: item.episodeTitle || item.title,
-          fallback: { type: "Stack", color: "surfaceVariant", children: [{ type: "Icon", name: "tv", margin: 16 }] }
-        },
-        { type: "Row", gap: 12, crossAxisAlignment: "center", padding: { x: 16, y: 12 }, children: [
-          { type: "Column", flex: 1, gap: 4, children: [
-            Raw(item.title, { style: "h5", bold: true, maxLines: 1 }),
-            ...item.episodeTitle ? [Raw(item.episodeTitle, { style: "caption", color: "muted", maxLines: 1 })] : []
-          ] },
-          { type: "Icon", name: "play", color: "primary" }
-        ] }
-      ]
-    };
-  }
-  return {
-    type: "Card",
-    key: "act-" + item.id,
-    background: "surfaceVariant",
-    padding: 12,
-    elevation: 0,
-    onTap: open2,
-    children: [{
-      type: "Row",
-      gap: 12,
-      crossAxisAlignment: "center",
-      children: [
-        {
-          type: "Image",
-          width: { compact: 64, expanded: 80 },
-          aspect: "2:3",
-          borderRadius: "small",
-          alt: item.title,
-          altEn: item.title,
-          ...item.poster ? { url: item.poster } : {},
-          fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: item.kind === "movie" ? "movie" : "tv", margin: 12 }] }
-        },
-        { type: "Column", flex: 1, gap: 4, children: [
-          { type: "Row", gap: 8, crossAxisAlignment: "center", children: [Avatar(item.user, 12), Raw(item.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 })] },
-          Txt([line[0] + many[0], line[1] + many[1]], { style: "caption", color: "muted" }),
-          Raw(item.title, { style: "h4", maxLines: 2 }),
-          { type: "Text", time: item.createdAt, style: "caption", color: "muted" }
-        ] },
-        { type: "Icon", name: "play", color: "primary" }
-      ]
-    }]
-  };
-}
-function suggestionsCard(item, ctx) {
-  return {
-    type: "Card",
-    key: "sugg",
-    variant: "outlined",
-    padding: 16,
-    gap: 12,
-    children: [
-      Txt(["Personas que podrías seguir", "People you could follow"], { style: "h5", bold: true }),
-      ...item.people.map((p) => ({
-        type: "Row",
-        key: "sugg-" + p.id,
-        gap: 12,
-        crossAxisAlignment: "center",
-        children: [
-          { type: "Stack", onTap: { event: "openUser", arg: String(p.id) }, children: [Avatar(p, 18)] },
-          NameBlock(p, p.bio ? [Raw(p.bio, { style: "caption", color: "muted", maxLines: 1 })] : []),
-          Button(T.follow, { event: "follow", arg: String(p.id) }, { key: "sfollow-" + p.id })
-        ]
-      }))
-    ]
-  };
-}
-function feedItem(item, ctx, me, selectedId) {
-  if (item.type === "post") return postCard(item, ctx, me, { selected: String(item.id) === String(selectedId) });
-  if (item.type === "activity") return activityCard(item);
-  if (item.type === "suggestions") return suggestionsCard(item, ctx);
-  return null;
-}
-function commentRow(c, me) {
-  const mine = !!me && String(c.user.id) === String(me.id);
-  const when = { type: "Text", time: c.createdAt, style: "caption", color: "muted" };
-  const bubble = {
-    type: "Card",
-    flex: 5,
-    color: mine ? "primaryContainer" : "surfaceVariant",
-    padding: { x: 12, y: 8 },
-    gap: 4,
-    // The pointed corner sits on the speaker's side.
-    borderRadius: mine ? { topStart: "large", topEnd: "small", bottomStart: "large", bottomEnd: "large" } : { topStart: "small", topEnd: "large", bottomStart: "large", bottomEnd: "large" },
-    children: mine ? [Raw(c.text), { type: "Row", mainAxisAlignment: "end", children: [when] }] : [{ type: "Row", gap: 8, children: [Raw(c.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 }), when] }, Raw(c.text)]
-  };
-  const room = { type: "Spacer", flex: 1 };
-  return {
-    type: "Row",
-    key: "c" + c.id,
-    gap: 8,
-    crossAxisAlignment: "start",
-    children: mine ? [room, bubble] : [{ type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] }, bubble, room]
-  };
-}
-
-// src/ui/views.js
-var MAX_TEXT2 = 500;
-var muted = (s) => mutedUntil(s.mutedUntil);
-function composerPrompt(s) {
-  const until = muted(s);
-  return {
-    type: "Card",
-    key: "prompt",
-    variant: "outlined",
-    padding: 12,
-    borderRadius: "large",
-    onTap: { ui: [{ open: "composer" }] },
-    ...until ? { enabledAt: until } : {},
-    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-      Avatar(s.me),
-      until ? muteLine(until, { flex: 1 }) : Txt(T.prompt, { color: "muted", flex: 1 }),
-      { type: "Icon", name: "edit", color: "primary" }
-    ] }]
-  };
-}
-function titleRow(t, props = {}, trailing = []) {
-  return {
-    type: "Card",
-    variant: "outlined",
-    padding: 8,
-    ...props,
-    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-      {
-        type: "Image",
-        width: 40,
-        aspect: "2:3",
-        borderRadius: "small",
-        alt: t.title,
-        altEn: t.title,
-        ...t.poster ? { url: t.poster } : {},
-        fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: t.kind === "movie" ? "movie" : "tv", margin: 8 }] }
-      },
-      { type: "Column", flex: 1, gap: 4, children: [
-        Raw(t.title, { style: "h5", bold: true, maxLines: 2 }),
-        Txt(T.titleLine(t), { style: "caption", color: "muted", maxLines: 1 })
-      ] },
-      ...trailing
-    ] }]
-  };
-}
-function titlePicker(s) {
-  const q = s.pickQuery || "";
-  const pick = (t) => titleRow(t, { key: "pick-" + t.kind + "-" + t.tmdbId, onTap: { event: "attachTitle", arg: attachKey(t) } });
-  const list = [];
-  if (!q) {
-    const recent = s.pickRecent || [];
-    if (recent.length) list.push(Txt(T.watching, { style: "label", color: "muted" }), ...recent.map(pick));
-    else list.push(Txt(T.searchTitlesHint, { style: "caption", color: "muted" }));
-  } else if (s.pickError) list.push(Txt(s.pickError === "noTmdb" ? T.noTmdb : T.searchFailed, { style: "caption", color: "error" }));
-  else if (s.pickResults == null) list.push({ type: "CircularProgressIndicator" });
-  else if (!s.pickResults.length) list.push(Txt(T.noTitles, { style: "caption", color: "muted" }));
-  else list.push(...s.pickResults.map(pick));
-  return {
-    type: "Card",
-    key: "picker",
-    background: "surfaceVariant",
-    padding: 12,
-    gap: 8,
-    children: [
-      { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
-        Txt(T.attach, { style: "h5", bold: true, flex: 1 }),
-        IconBtn("close", T.cancel, "cancelAttach", { key: "cancelAttach" })
-      ] },
-      {
-        type: "TextField",
-        key: "titleSearch",
-        kind: "search",
-        maxLength: MAX_QUERY,
-        labelText: T.searchTitles[0],
-        labelTextEn: T.searchTitles[1],
-        onChanged: "searchTitles",
-        autofocus: true
-      },
-      ...list
-    ]
-  };
-}
-function composerSheet(s) {
-  const until = muted(s);
-  const lock = until ? { enabled: false } : {};
-  const attach = s.attach || null;
-  const attachment = attach ? titleRow(attach, { key: "attached" }, [IconBtn("close", T.removeAttach, "clearAttach", { key: "clearAttach", ...lock })]) : s.picking ? titlePicker(s) : {
-    type: "Button",
-    variant: "secondary",
-    key: "openAttach",
-    icon: "movie",
-    labelText: T.attach[0],
-    labelTextEn: T.attach[1],
-    onPressed: { event: "openAttach", timeoutMs: 2e4 },
-    ...lock
-  };
-  return {
-    type: "BottomSheet",
-    key: "composer",
-    title: T.compose[0],
-    titleEn: T.compose[1],
-    children: [{ type: "Form", key: "composeForm", gap: 12, onSubmit: { event: "publish", timeoutMs: 28e3 }, children: [
-      // Several lines (Enter is a new line); Kino draws a multi-line field 3 lines high, growing to 8.
-      {
-        type: "TextField",
-        key: "postText",
-        multiline: true,
-        maxLines: 8,
-        maxLength: MAX_TEXT2,
-        required: !attach,
-        labelText: T.prompt[0],
-        labelTextEn: T.prompt[1],
-        hintText: T.postHint[0],
-        hintTextEn: T.postHint[1],
-        ...lock
-      },
-      attachment,
-      until ? muteLine(until) : Txt(T.aiNote, { style: "caption", color: "muted" }),
-      { type: "ElevatedButton", key: "publish", icon: "send", labelText: T.publish[0], labelTextEn: T.publish[1], submit: true, fill: true, ...lock }
-    ] }]
-  };
-}
-function generalSource(s) {
-  return { items: s.feed, next: s.next, newer: s.newer, loadingMore: s.loadingMore, key: "feed", more: "more", canPost: true, header: null };
-}
-function newerBanner(s) {
-  const n = (s.newer || []).length;
-  if (!n) return null;
-  const [es, en] = T.newPosts(n);
-  return { type: "Row", key: "newerRow", mainAxisAlignment: "center", children: [
-    { type: "Button", variant: "secondary", key: "showNewer", icon: "expand_less", labelText: es, labelTextEn: en, onPressed: "showNewer", autofocus: true }
-  ] };
-}
-function moreButton(src) {
-  if (!src.next) return null;
-  return { type: "Row", key: src.key + "MoreRow", mainAxisAlignment: "center", children: [
-    {
-      type: "Button",
-      variant: "secondary",
-      key: src.key + "More",
-      icon: "expand_more",
-      labelText: T.more[0],
-      labelTextEn: T.more[1],
-      onPressed: { event: src.more, timeoutMs: 2e4 },
-      loading: !!src.loadingMore
-    }
-  ] };
-}
-var emptyFeed = () => ({ type: "emptyState", icon: "edit", title: T.emptyFeed[0], titleEn: T.emptyFeed[1], text: T.emptyFeedText[0], textEn: T.emptyFeedText[1] });
-function skeletonFeed() {
-  return Array.from({ length: 3 }, (_, i) => ({ type: "Card", key: "sk" + i, padding: 16, gap: 12, children: [
-    { type: "Row", gap: 12, children: [{ type: "Skeleton", width: 40, height: 40, borderRadius: "full" }, { type: "Skeleton", width: 160, height: 16 }] },
-    { type: "Skeleton", height: 16, fill: true },
-    { type: "Skeleton", height: 16, width: 240 }
-  ] }));
-}
-function feedList(s, ctx, src = generalSource(s)) {
-  const items = [];
-  if (src.header) items.push(src.header);
-  if (!isTv(ctx) && src.canPost) items.push(composerPrompt(s));
-  const newer = src.key === "feed" ? newerBanner(s) : null;
-  if (newer) items.push(newer);
-  if (src.items === void 0) items.push(...skeletonFeed());
-  else if (!src.items.length && !(src.newer || []).length) items.push({ ...src.empty || emptyFeed(), key: "emptyFeed" });
-  const here = src.key === "cfeed" && s.community ? { ...ctx, community: s.community.id } : ctx;
-  for (const it of src.items || []) {
-    const node = feedItem(it, here, s.me, s.selected);
-    if (node) items.push(node);
-  }
-  const more = moreButton(src);
-  if (more) items.push(more);
-  return {
-    type: "ListView",
-    key: src.key,
-    flex: 1,
-    gap: 12,
-    padding: pagePadding,
-    items,
-    empty: src.empty || emptyFeed()
-  };
-}
-function threadItems(s, ctx) {
-  const th = s.thread;
-  const comments = th.items || [];
-  return [
-    postCard(th.post, { ...ctx, device: "phone" }, s.me, { full: true }),
-    Txt(T.comments, { key: "commentsTitle", style: "h5", bold: true, margin: { top: 4 } }),
-    ...comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { key: "noComments", color: "muted" })]
-  ];
-}
-function commentBox(s) {
-  const until = muted(s);
-  if (until) return { type: "Column", key: "commentBox", gap: 4, children: [muteLine(until)] };
-  return { type: "Column", key: "commentBox", gap: 4, children: [
-    {
-      type: "TextField",
-      key: "commentText",
-      multiline: true,
-      maxLines: 6,
-      maxLength: 300,
-      labelText: T.commentHint[0],
-      labelTextEn: T.commentHint[1],
-      onSubmitted: "sendComment"
-    },
-    { type: "Row", mainAxisAlignment: "end", children: [
-      {
-        type: "Button",
-        variant: "secondary",
-        key: "sendComment",
-        icon: "send",
-        labelText: T.send[0],
-        labelTextEn: T.send[1],
-        onPressed: { event: "sendComment", timeoutMs: 2e4 }
-      }
-    ] }
-  ] };
-}
-function threadBody(s, ctx) {
-  if (!s.thread || !s.thread.post) {
-    return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
-  }
-  return [...threadItems(s, ctx), commentBox(s)];
-}
-function draftsBanner(s) {
-  const drafts = s.drafts || [];
-  if (!drafts.length) return null;
-  const row = (d) => ({
-    type: "Column",
-    key: "draft-" + d.id,
-    gap: 4,
-    children: [
-      Txt(d.from ? T.draftFrom(d.from) : T.draftFromUnknown, { style: "label", color: "muted" }),
-      ...d.text ? [Raw(d.text, { maxLines: 3 })] : [],
-      ...d.titled ? [Txt(T.draftWithTitle, { style: "caption", color: "muted" })] : [],
-      { type: "Row", gap: 8, children: [
-        Button(T.review, { event: "reviewDraft", arg: d.id, timeoutMs: 2e4 }, { key: "review-" + d.id, icon: "edit" }),
-        TextBtn(T.discard, { event: "discardDraft", arg: d.id }, { key: "discard-" + d.id })
-      ] }
-    ]
-  });
-  return {
-    type: "Card",
-    key: "drafts",
-    variant: "outlined",
-    padding: 12,
-    gap: 12,
-    margin: { x: 12, y: 8 },
-    children: [
-      Txt(T.draftsTitle(drafts.length), { style: "h5", bold: true }),
-      Txt(T.draftsHint, { style: "caption", color: "muted" }),
-      ...drafts.map(row)
-    ]
-  };
-}
-function feedTab(s, ctx, src = generalSource(s)) {
-  const drafts = src.key === "feed" ? draftsBanner(s) : null;
-  if (!isTv(ctx)) {
-    return { type: "Column", flex: 1, children: [
-      ...drafts ? [drafts] : [],
-      feedList(s, ctx, src),
-      composerSheet(s)
-    ] };
-  }
-  return { type: "Row", flex: 1, gap: 24, padding: { x: 32, y: 16 }, children: [
-    { type: "Column", flex: 7, gap: 12, children: [
-      // Writing lives in the app bar, next to the reload button; here only what the person should know before reading.
-      ...src.canPost && muted(s) || src.key === "feed" && newerBanner(s) ? [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-        ...src.canPost && muted(s) ? [muteLine(muted(s))] : [],
-        ...src.key === "feed" && newerBanner(s) ? [newerBanner(s)] : []
-      ] }] : [],
-      ...drafts ? [{ ...drafts, margin: 0 }] : [],
-      { ...feedList(s, ctx, src), padding: 0 }
-    ] },
-    {
-      type: "Card",
-      key: "pane",
-      flex: 5,
-      background: "surfaceVariant",
-      padding: 16,
-      canRequestFocus: !(s.thread && s.thread.post),
-      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] }]
-    },
-    composerSheet(s)
-  ] };
-}
-var isCreator = (plugins) => (plugins || []).some((pl) => !pl.hidden);
-var editProfileButton = () => Button(T.editProfile, { ui: [{ open: "editProfile" }] }, { key: "editProfileBtn", icon: "edit", variant: "secondary", type: "Button" });
-function profileHeader(p, own, ctx, plugins) {
-  const u = p.user;
-  const stat = (n, [es, en]) => ({ type: "Column", flex: 1, crossAxisAlignment: "center", children: [Raw(String(n), { style: "h4", bold: true }), Txt([es, en], { style: "caption", color: "muted" })] });
-  return {
-    type: "Card",
-    key: "head-" + u.id,
-    padding: 24,
-    gap: 16,
-    elevation: 1,
-    children: [
-      { type: "Row", gap: 16, crossAxisAlignment: "center", children: [
-        Avatar(u, isTv(ctx) ? 48 : 36),
-        { type: "Column", flex: 1, gap: 4, children: [
-          { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
-            Raw(u.name, { style: "h3", maxLines: 1 }),
-            ...isCreator(plugins) ? [Tag(T.creatorTag, "bolt", { key: "creatorTag" })] : []
-          ] },
-          ...u.handle ? [Raw("@" + u.handle, { color: "muted" })] : []
-        ] },
-        // On the TV the free room to the right of the name holds the button; a phone keeps it under the numbers.
-        ...own && isTv(ctx) ? [editProfileButton()] : []
-      ] },
-      ...u.bio ? [Raw(u.bio)] : [],
-      { type: "Row", gap: 8, children: [
-        stat(p.postCount || 0, T.postsCount),
-        stat(p.followers || 0, T.followers),
-        stat(p.followingCount || 0, T.followingCount)
-      ] },
-      ...own ? isTv(ctx) ? [] : [{ type: "Row", gap: 8, children: [editProfileButton()] }] : [{ type: "Row", children: [p.following ? { type: "Button", variant: "secondary", key: "unfollow-" + u.id, icon: "check", labelText: T.following[0], labelTextEn: T.following[1], selected: true, onPressed: { event: "unfollow", arg: String(u.id) } } : Button(T.follow, { event: "follow", arg: String(u.id) }, { key: "follow-" + u.id, icon: "add" })] }]
-    ]
-  };
-}
-function watchedGrid(items, ctx, { own = false } = {}) {
-  if (!items.length) return [Txt(own ? T.noWatched : T.noPosts, { color: "muted" })];
-  return [{
-    type: "GridView",
-    key: own ? "myWatched" : "theirWatched",
-    columns: { compact: 3, medium: 4, expanded: 6 },
-    gap: 8,
-    children: items.slice(0, 18).map((a) => ({
-      type: "Card",
-      key: "w" + a.id,
-      flush: true,
-      onTap: { go: { titleByIds: { tmdb: a.tmdbId, kind: a.kind, title: a.title.slice(0, 120) } } },
-      children: [
-        {
-          type: "Image",
-          aspect: "2:3",
-          alt: a.title,
-          altEn: a.title,
-          ...a.poster ? { url: a.poster } : {},
-          fallback: { type: "Column", padding: 8, children: [{ type: "Icon", name: a.kind === "movie" ? "movie" : "tv" }, Raw(a.title, { style: "caption", maxLines: 3 })] }
-        }
-      ]
-    }))
-  }];
-}
-function pluginRow(pl, { own = false } = {}) {
-  const addr = pl.repo;
-  return {
-    type: "Card",
-    key: "plg" + addr,
-    padding: 12,
-    onTap: { go: { installPlugin: { repo: addr } } },
-    children: [
-      { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-        { type: "Column", flex: 1, gap: 2, children: [
-          Raw(pl.name, { style: "h5", bold: true, maxLines: 1 }),
-          ...pl.description ? [Raw(pl.description, { style: "caption", color: "muted", maxLines: 2 })] : [],
-          Txt([`★ ${pl.stars}`, `★ ${pl.stars}`], { style: "caption", color: "muted" })
-        ] },
-        ...own ? [TextBtn(
-          pl.hidden ? T.unhidePlugin : T.hidePlugin,
-          { event: pl.hidden ? "unhidePlugin" : "hidePlugin", arg: addr },
-          { key: "hideBtn" + addr }
-        )] : []
-      ] }
-    ]
-  };
-}
-function creatorPluginsSection(plugins, { own = false } = {}) {
-  const list = plugins || [];
-  if (!list.length) return [];
-  const visible = list.filter((pl) => !pl.hidden);
-  const hidden = own ? list.filter((pl) => pl.hidden) : [];
-  return [
-    ...visible.length ? [Txt(T.creatorPlugins, { style: "h4" }), ...visible.map((pl) => pluginRow(pl, { own }))] : [],
-    ...hidden.length ? [Txt(T.hiddenPlugins, { style: "caption", color: "muted" }), ...hidden.map((pl) => pluginRow(pl, { own }))] : []
-  ];
-}
-var MONTHS = [
-  ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
-  ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-];
-function watchedLine2(a, lang) {
-  const parts = [];
-  if (Number.isInteger(a.season) && Number.isInteger(a.episode)) parts.push(lang ? `S${a.season} · E${a.episode}` : `T${a.season} · E${a.episode}`);
-  const d = new Date(Number(a.watchedAt) || 0);
-  if (a.watchedAt) parts.push(lang ? `${MONTHS[1][d.getMonth()]} ${d.getDate()}` : `${d.getDate()} ${MONTHS[0][d.getMonth()]}`);
-  return parts.join(" · ");
-}
-function coinsCard(coins) {
-  if (!coins) return null;
-  const cap = coins.capToday || 0;
-  return { type: "Card", key: "coinsCard", padding: 16, gap: 8, children: [
-    { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-      { type: "Icon", name: "star", color: "primary" },
-      { type: "Column", flex: 1, gap: 0, children: [
-        Txt(T.coinTitle, { style: "caption", color: "muted" }),
-        Txt(T.coinBalance(coins.balance), { style: "h4", bold: true })
-      ] }
-    ] },
-    ...cap ? [{
-      type: "LinearProgressIndicator",
-      value: Math.min(1, (coins.earnedToday || 0) / cap),
-      labelText: T.coinToday(coins.earnedToday || 0, cap)[0],
-      labelTextEn: T.coinToday(coins.earnedToday || 0, cap)[1]
-    }] : [],
-    Txt(T.coinHint, { style: "caption", color: "muted" })
-  ] };
-}
-function profileTab(s, ctx) {
-  const p = s.profile;
-  if (!p) return { type: "Column", padding: pagePadding, gap: 12, children: skeletonFeed().slice(0, 1) };
-  const mine = s.myActivity || [];
-  return { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
-    profileHeader(p, true, ctx, s.myPlugins),
-    ...ctx.coins && s.coins ? [coinsCard(s.coins)] : [],
-    { type: "Card", key: "shareCard", padding: 16, gap: 4, children: [
-      { type: "Switch", key: "share", value: !!s.me.shareActivity, labelText: T.share[0], labelTextEn: T.share[1], onChanged: "toggleShare" },
-      Txt(T.shareHint, { style: "caption", color: "muted" })
-    ] },
-    Txt(T.watched, { style: "h4" }),
-    Txt(T.watchedHint, { style: "caption", color: "muted" }),
-    ...mine.length ? mine.slice(0, 30).map((a) => ({
-      type: "Row",
-      key: "ma" + a.id,
-      gap: 12,
-      crossAxisAlignment: "center",
-      children: [
-        {
-          type: "Image",
-          width: 40,
-          aspect: "2:3",
-          borderRadius: "small",
-          ...a.poster ? { url: a.poster } : {},
-          alt: a.title,
-          altEn: a.title,
-          fallback: { type: "Stack", color: "surfaceVariant", children: [{ type: "Icon", name: a.kind === "movie" ? "movie" : "tv", margin: 8 }] }
-        },
-        // A labelled Switch fills its row, so the title is its label (flex 1) rather than a column beside it.
-        {
-          type: "Switch",
-          key: "act" + a.id,
-          flex: 1,
-          value: !a.hidden,
-          labelText: a.title || "—",
-          labelTextEn: a.title || "—",
-          hint: watchedLine2(a, 0),
-          hintEn: watchedLine2(a, 1),
-          onChanged: { event: "toggleActivity", arg: String(a.id) }
-        }
-      ]
-    })) : [Txt(T.noWatched, { color: "muted" })],
-    Txt(T.posts, { style: "h4" }),
-    ...(p.posts || []).length ? p.posts.map((post2) => postCard(post2, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })],
-    ...creatorPluginsSection(s.myPlugins, { own: true }),
-    TextBtn(
-      ["Cerrar sesión en todos tus aparatos", "Log out on all your devices"],
-      "logoutAll",
-      { key: "logoutAll", confirm: "¿Cerrar sesión en todos tus aparatos?", confirmEn: "Log out on all your devices?" }
-    ),
-    editProfileSheet(s)
-  ] }] };
-}
-function editProfileSheet(s) {
-  return { type: "BottomSheet", key: "editProfile", title: T.editProfile[0], titleEn: T.editProfile[1], children: [
-    { type: "Form", key: "profileForm", gap: 12, onSubmit: "saveProfile", children: [
-      { type: "TextField", key: "nameText", value: s.me.name, required: true, maxLength: 40, labelText: T.name[0], labelTextEn: T.name[1] },
-      {
-        type: "TextField",
-        key: "handleText",
-        value: s.me.handle || "",
-        required: true,
-        minLength: 3,
-        maxLength: 20,
-        pattern: "^@?[a-zA-Z0-9_.]{3,20}$",
-        errorText: "3 a 20 letras, números, _ o .",
-        errorTextEn: "3 to 20 letters, digits, _ or .",
-        labelText: "@usuario",
-        labelTextEn: "@username"
-      },
-      {
-        type: "TextField",
-        key: "bioText",
-        value: s.me.bio || "",
-        multiline: true,
-        maxLines: 3,
-        maxLength: 160,
-        labelText: T.bio[0],
-        labelTextEn: T.bio[1],
-        hintText: T.bioHint[0],
-        hintTextEn: T.bioHint[1]
-      },
-      { type: "ElevatedButton", key: "saveProfile", labelText: T.save[0], labelTextEn: T.save[1], submit: true, fill: true }
-    ] }
-  ] };
-}
-function personRow(p) {
-  return { type: "Row", key: "p" + p.id, gap: 8, crossAxisAlignment: "center", children: [
-    {
-      type: "ListTile",
-      flex: 1,
-      title: p.name,
-      titleEn: p.name,
-      subtitle: p.handle ? "@" + p.handle + (p.bio ? " · " + p.bio : "") : p.bio || void 0,
-      leading: Avatar(p),
-      onTap: { event: "openUser", arg: String(p.id) }
-    },
-    p.following ? { type: "Button", variant: "secondary", key: "pf" + p.id, labelText: T.following[0], labelTextEn: T.following[1], selected: true, onPressed: { event: "unfollow", arg: String(p.id) } } : Button(T.follow, { event: "follow", arg: String(p.id) }, { key: "pf" + p.id })
-  ] };
-}
-function peopleTab(s, ctx) {
-  const list = s.results !== void 0 ? s.results : s.people;
-  return { type: "Column", flex: 1, gap: 12, padding: pagePadding, children: [
-    {
-      type: "TextField",
-      key: "searchText",
-      kind: "search",
-      maxLength: 40,
-      labelText: "Buscar por nombre o @usuario",
-      labelTextEn: "Search by name or @username",
-      onSubmitted: "search",
-      trailingIcon: "search",
-      trailingLabel: "Buscar",
-      trailingLabelEn: "Search",
-      onTrailingTap: "search"
-    },
-    {
-      type: "ListView",
-      key: "people",
-      flex: 1,
-      gap: 4,
-      items: (list || []).map(personRow),
-      empty: list === void 0 ? { type: "CircularProgressIndicator" } : { type: "emptyState", icon: "person", title: T.noPeople[0], titleEn: T.noPeople[1], text: T.noPeopleText[0], textEn: T.noPeopleText[1] }
-    }
-  ] };
-}
-function mainView(s, ctx) {
-  const tab = ["feed", "communities", "people"].includes(s.tab) ? s.tab : "feed";
-  const unread = s.unread || 0;
-  const tabs = { type: "TabBar", key: "tabs", value: tab, onChanged: "tab", tabs: [
-    { value: "feed", label: T.feed[0], labelEn: T.feed[1] },
-    { value: "communities", label: T.communities[0], labelEn: T.communities[1] },
-    { value: "people", label: T.people[0], labelEn: T.people[1] }
-  ] };
-  const me = IconBtn("person", T.profile, "openProfile", {
-    key: "openProfile",
-    ...unread ? { badge: { text: String(Math.min(unread, 99)) } } : {}
-  });
-  const writeInBar = isTv(ctx) && tab === "feed" && generalSource(s).canPost;
-  const body = tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
-  return {
-    type: "Scaffold",
-    every: { ms: 6e4, event: "tick" },
-    // One row: the tabs where the greeting used to be, then (on the TV, in the feed) the red write button, reload and your
-    // avatar. The bar's own buttons are plain icons, so the red one rides in the title next to them. A phone writes from the
-    // prompt at the top of the feed.
-    appBar: { type: "AppBar", ...barPadding(ctx), title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-      { ...tabs, flex: 1 },
-      Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...muted(s) ? { enabledAt: muted(s) } : {} })
-    ] } : tabs, actions: [
-      IconBtn("refresh", T.refresh, { event: "refresh", timeoutMs: 2e4 }, { key: "refresh", loading: !!s.refreshing }),
-      me
-    ] },
-    body
-  };
-}
-function meView(s, ctx) {
-  const heading = isTv(ctx) ? { title: Txt(T.profile, { style: "h5", bold: true }) } : { title: T.profile[0], titleEn: T.profile[1] };
-  return { type: "Scaffold", appBar: {
-    type: "AppBar",
-    ...barPadding(ctx),
-    ...heading,
-    leading: IconBtn("arrow_back", T.back, "back")
-  }, body: profileTab(s, ctx) };
-}
-function postView(s, ctx) {
-  const appBar = { type: "AppBar", ...barPadding(ctx), title: T.post[0], titleEn: T.post[1], leading: IconBtn("arrow_back", T.back, "back") };
-  if (!s.thread || !s.thread.post) return { type: "Scaffold", appBar, body: { type: "Column", padding: pagePadding, children: threadBody(s, ctx) } };
-  return { type: "Scaffold", appBar, body: { type: "Column", flex: 1, children: [
-    { type: "ListView", key: "threadList", flex: 1, gap: 12, padding: pagePadding, stickToBottom: true, newItemsHint: true, items: threadItems(s, ctx) },
-    { type: "Column", padding: { x: 12, y: 8 }, children: [commentBox(s)] }
-  ] } };
-}
-function userView(s, ctx) {
-  const p = s.user;
-  const body = !p ? { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] } : { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
-    profileHeader(p, s.me && p.user.id === s.me.id, ctx, p.plugins),
-    Txt(T.theirWatched, { style: "h4" }),
-    ...watchedGrid(p.activity || [], ctx),
-    Txt(T.posts, { style: "h4" }),
-    ...(p.posts || []).length ? p.posts.map((post2) => postCard(post2, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })],
-    ...creatorPluginsSection(p.plugins, { own: false })
-  ] }] };
-  return { type: "Scaffold", appBar: {
-    type: "AppBar",
-    ...barPadding(ctx),
-    title: p ? p.user.name : T.profile[0],
-    titleEn: p ? p.user.name : T.profile[1],
-    leading: IconBtn("arrow_back", T.back, "back")
-  }, body };
-}
-function welcomeView(s, ctx) {
-  const ok2 = s.handleCheck;
-  return { type: "SingleChildScrollView", children: [{ type: "Column", padding: { x: 24, y: 32 }, gap: 16, maxWidth: 480, alignSelf: "center", fill: true, children: [
-    { type: "Column", fill: true, crossAxisAlignment: "center", children: [Avatar(s.me || { name: "?" }, 40)] },
-    Txt(["Bienvenido a Kino Social", "Welcome to Kino Social"], { style: "h2", textAlign: "center" }),
-    Txt(["Elige tu @usuario: así te encuentran tus amigos. Es único y lo puedes cambiar después.", "Pick your @username: it's how friends find you. It's unique and you can change it later."], { textAlign: "center", color: "muted" }),
-    { type: "Form", key: "welcomeForm", gap: 12, onSubmit: "pickHandle", children: [
-      {
-        type: "TextField",
-        key: "handleText",
-        required: true,
-        minLength: 3,
-        maxLength: 20,
-        pattern: "^@?[a-zA-Z0-9_.]{3,20}$",
-        errorText: "3 a 20 letras, números, _ o .",
-        errorTextEn: "3 to 20 letters, digits, _ or .",
-        labelText: "@usuario",
-        labelTextEn: "@username",
-        onChanged: "checkHandle"
-      },
-      ...ok2 ? [{ type: "Row", gap: 8, crossAxisAlignment: "center", children: [
-        { type: "Icon", name: ok2.available ? "check" : "close", size: "sm", color: ok2.available ? "secondary" : "error" },
-        Txt(
-          ok2.available ? [`@${ok2.handle} está libre`, `@${ok2.handle} is free`] : [`@${ok2.handle} no está disponible`, `@${ok2.handle} is not available`],
-          { style: "caption", color: ok2.available ? "muted" : "error" }
-        )
-      ] }] : [],
-      { type: "TextField", key: "nameText", required: true, maxLength: 40, labelText: T.name[0], labelTextEn: T.name[1] },
-      { type: "ElevatedButton", key: "pickHandle", labelText: ["Empezar", "Start"][0], labelTextEn: "Start", submit: true, fill: true }
-    ] }
-  ] }] };
-}
-function problemView(code) {
-  if (code === "device_taken" || code === "too_many_devices") {
-    const t = code === "device_taken" ? T.deviceTaken : T.tooManyDevices;
-    return {
-      type: "errorState",
-      icon: "lock",
-      title: t[0],
-      titleEn: t[1],
-      text: T.unbindText[0],
-      textEn: T.unbindText[1],
-      action: { label: T.retry[0], labelEn: T.retry[1], event: "open" }
-    };
-  }
-  if (code === "no_identity" || code === "unofficial") {
-    return {
-      type: "errorState",
-      icon: "lock",
-      title: T.noIdentity[0],
-      titleEn: T.noIdentity[1],
-      text: T.noIdentityText[0],
-      textEn: T.noIdentityText[1],
-      action: { label: T.retry[0], labelEn: T.retry[1], event: "open" }
-    };
-  }
-  return {
-    type: "errorState",
-    title: T.offline[0],
-    titleEn: T.offline[1],
-    text: T.offlineText[0],
-    textEn: T.offlineText[1],
-    action: { label: T.retry[0], labelEn: T.retry[1], event: "open" }
-  };
-}
-
-// src/ui/communities.js
-var membersLine = (c) => T.members(c.members);
-var MARK_COLORS = ["secondary", "primaryContainer", "primary"];
-function Mark(c, radius = 24) {
-  const letter = (String(c.name || "?").trim()[0] || "?").toUpperCase();
-  return {
-    type: "Column",
-    width: radius * 2,
-    height: radius * 2,
-    color: MARK_COLORS[Math.abs(Number(c.id) || 0) % MARK_COLORS.length],
-    borderRadius: "medium",
-    mainAxisAlignment: "center",
-    crossAxisAlignment: "center",
-    children: [Raw(letter, { style: radius > 28 ? "h3" : "h4", bold: true })]
-  };
-}
-function joinButton(c, key, strong = false) {
-  if (c.owner) return null;
-  if (c.private && !c.joined) {
-    return c.requested ? {
-      type: "Button",
-      variant: "secondary",
-      key,
-      icon: "schedule",
-      labelText: T.requested[0],
-      labelTextEn: T.requested[1],
-      selected: true,
-      onPressed: { event: "leaveCommunity", arg: String(c.id) }
-    } : strong ? Button(T.askToJoin, { event: "joinCommunity", arg: String(c.id) }, { key, icon: "lock" }) : { type: "Button", variant: "secondary", key, icon: "lock", labelText: T.askToJoin[0], labelTextEn: T.askToJoin[1], onPressed: { event: "joinCommunity", arg: String(c.id) } };
-  }
-  return c.joined ? {
-    type: "Button",
-    variant: "secondary",
-    key,
-    icon: "check",
-    labelText: T.joined[0],
-    labelTextEn: T.joined[1],
-    selected: true,
-    onPressed: { event: "leaveCommunity", arg: String(c.id) }
-  } : strong ? Button(T.join, { event: "joinCommunity", arg: String(c.id) }, { key, icon: "add" }) : { type: "Button", variant: "secondary", key, icon: "add", labelText: T.join[0], labelTextEn: T.join[1], onPressed: { event: "joinCommunity", arg: String(c.id) } };
-}
-function communityRow(c) {
-  const join = joinButton(c, "cj" + c.id);
-  return { type: "Card", key: "c" + c.id, padding: 12, onTap: { event: "openCommunity", arg: String(c.id) }, children: [
-    { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-      Mark(c),
-      { type: "Column", flex: 1, gap: 0, children: [
-        Raw(c.name, { style: "h5", bold: true, maxLines: 1 }),
-        Txt([
-          `@${c.slug} · ${membersLine(c)[0]}${c.private ? " · " + T.privateTag[0] : ""}`,
-          `@${c.slug} · ${membersLine(c)[1]}${c.private ? " · " + T.privateTag[1] : ""}`
-        ], { style: "caption", color: "muted", maxLines: 1 }),
-        ...c.description ? [Raw(c.description, { style: "caption", maxLines: 2 })] : []
-      ] },
-      ...join ? [join] : []
-    ] }
-  ] };
-}
-function createSheet() {
-  return { type: "BottomSheet", key: "createCommunity", title: T.newCommunity[0], titleEn: T.newCommunity[1], children: [
-    { type: "Form", key: "communityForm", gap: 12, onSubmit: "createCommunity", children: [
-      { type: "TextField", key: "communityName", required: true, minLength: 3, maxLength: 40, labelText: T.communityName[0], labelTextEn: T.communityName[1] },
-      {
-        type: "TextField",
-        key: "communitySlug",
-        required: true,
-        minLength: 3,
-        maxLength: 20,
-        pattern: "^@?[a-zA-Z0-9_.]{3,20}$",
-        errorText: "3 a 20 letras, números, _ o .",
-        errorTextEn: "3 to 20 letters, digits, _ or .",
-        labelText: T.communitySlug[0],
-        labelTextEn: T.communitySlug[1]
-      },
-      {
-        type: "TextField",
-        key: "communityDescription",
-        multiline: true,
-        maxLines: 3,
-        maxLength: 200,
-        labelText: T.communityDescription[0],
-        labelTextEn: T.communityDescription[1]
-      },
-      {
-        type: "Switch",
-        key: "communityPrivate",
-        value: false,
-        labelText: T.privateCommunity[0],
-        labelTextEn: T.privateCommunity[1],
-        hint: T.privateHint[0],
-        hintEn: T.privateHint[1]
-      },
-      { type: "ElevatedButton", key: "createCommunityBtn", icon: "add", labelText: T.create[0], labelTextEn: T.create[1], submit: true, fill: true }
-    ] }
-  ] };
-}
-function communitiesTab(s, ctx) {
-  const lists = s.communities;
-  const results = s.communityResults;
-  const items = [
-    { type: "Row", key: "cTop", gap: 12, crossAxisAlignment: "center", children: [
-      {
-        type: "TextField",
-        key: "communitySearch",
-        kind: "search",
-        flex: 1,
-        maxLength: 40,
-        labelText: T.searchCommunities[0],
-        labelTextEn: T.searchCommunities[1],
-        onSubmitted: "searchCommunities",
-        trailingIcon: "search",
-        trailingLabel: "Buscar",
-        trailingLabelEn: "Search",
-        onTrailingTap: "searchCommunities"
-      },
-      Button(T.create, { ui: [{ open: "createCommunity" }] }, { key: "newCommunity", icon: "add" })
-    ] }
-  ];
-  if (results !== void 0) {
-    items.push(Txt(T.results, { key: "cResultsTitle", style: "h5", bold: true }), ...results.map(communityRow));
-    if (!results.length) items.push(Txt(T.noCommunitiesFound, { key: "cNone", color: "muted" }));
-  } else if (lists === void 0) {
-    items.push({ type: "CircularProgressIndicator", key: "cLoading" });
-  } else {
-    if (lists.mine.length) items.push(Txt(T.yourCommunities, { key: "cMineTitle", style: "h5", bold: true }), ...lists.mine.map(communityRow));
-    items.push(Txt(T.discover, { key: "cDiscoverTitle", style: "h5", bold: true }), ...lists.discover.map(communityRow));
-    if (!lists.discover.length && !lists.mine.length) {
-      items.push({
-        type: "emptyState",
-        key: "cEmpty",
-        icon: "add",
-        title: T.noCommunities[0],
-        titleEn: T.noCommunities[1],
-        text: T.noCommunitiesText[0],
-        textEn: T.noCommunitiesText[1]
-      });
-    }
-  }
-  return { type: "Column", flex: 1, children: [
-    { type: "ListView", key: "communityList", flex: 1, gap: 8, padding: pagePadding, items },
-    createSheet()
-  ] };
-}
-function communitySource(s, ctx) {
-  const c = s.community;
-  const join = joinButton(c, "cHeadJoin", true);
-  const header = { type: "Card", key: "cHead", padding: 16, gap: 12, elevation: 1, children: [
-    { type: "Row", gap: 16, crossAxisAlignment: "center", children: [
-      Mark(c, isTv(ctx) ? 40 : 32),
-      { type: "Column", flex: 1, gap: 4, children: [
-        Raw(c.name, { style: "h3", maxLines: 2 }),
-        Txt([
-          `@${c.slug} · ${membersLine(c)[0]} · ${count(c.posts)} ${c.posts === 1 ? "publicación" : "publicaciones"}`,
-          `@${c.slug} · ${membersLine(c)[1]} · ${count(c.posts)} ${c.posts === 1 ? "post" : "posts"}`
-        ], { style: "caption", color: "muted" })
-      ] }
-    ] },
-    ...c.description ? [Raw(c.description)] : [],
-    ...join ? [{ type: "Row", children: [join] }] : c.owner ? [Txt(T.youOwn, { style: "caption", color: "muted" })] : [],
-    // The owner of a private one: who is waiting to get in.
-    ...c.owner && c.private && c.pending ? [{ type: "Row", children: [
-      Button(T.requests(c.pending), { event: "openRequests", timeoutMs: 2e4 }, { key: "cRequests", icon: "person_add" })
-    ] }] : []
-  ] };
-  const locked = c.private && !c.joined;
-  return {
-    items: s.cfeed,
-    next: s.cnext,
-    newer: [],
-    loadingMore: s.cloadingMore,
-    key: "cfeed",
-    more: "moreCommunity",
-    canPost: !!c.joined,
-    header,
-    empty: locked ? { type: "emptyState", icon: "lock", title: T.privateLocked[0], titleEn: T.privateLocked[1], text: T.privateLockedText[0], textEn: T.privateLockedText[1] } : {
-      type: "emptyState",
-      icon: "edit",
-      title: T.emptyCommunity[0],
-      titleEn: T.emptyCommunity[1],
-      text: c.joined ? T.emptyCommunityMember[0] : T.emptyCommunityVisitor[0],
-      textEn: c.joined ? T.emptyCommunityMember[1] : T.emptyCommunityVisitor[1]
-    }
-  };
-}
-function requestsSheet(s) {
-  const rows = (s.crequests || []).map((p) => ({ type: "Row", key: "rq" + p.id, gap: 8, crossAxisAlignment: "center", children: [
-    {
-      type: "ListTile",
-      flex: 1,
-      title: p.name,
-      titleEn: p.name,
-      subtitle: p.handle ? "@" + p.handle : void 0,
-      leading: Avatar(p),
-      onTap: { event: "openUser", arg: String(p.id) }
-    },
-    { type: "Button", variant: "secondary", key: "rqNo" + p.id, labelText: T.reject[0], labelTextEn: T.reject[1], onPressed: { event: "rejectRequest", arg: String(p.id) } },
-    Button(T.approve, { event: "approveRequest", arg: String(p.id) }, { key: "rqOk" + p.id })
-  ] }));
-  return {
-    type: "BottomSheet",
-    key: "communityRequests",
-    title: T.joinRequests[0],
-    titleEn: T.joinRequests[1],
-    children: [{ type: "Column", gap: 8, children: rows }]
-  };
-}
-function communityView(s, ctx) {
-  const c = s.community;
-  return {
-    type: "Scaffold",
-    appBar: { type: "AppBar", ...barPadding(ctx), title: c ? c.name : T.communities[0], titleEn: c ? c.name : T.communities[1], leading: IconBtn("arrow_back", T.back, "back") },
-    body: c ? { type: "Column", flex: 1, children: [feedTab(s, ctx, communitySource(s, ctx)), requestsSheet(s)] } : { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] }
-  };
-}
-
-// src/activity.js
-var LAST_KEY = "activityLastSync";
-var SENT_KEY = "activitySent";
-var POSTERS_KEY = "posters";
-var EVERY_MS = 10 * 60 * 1e3;
-var DAY_MS = 864e5;
-var MAX_SENT = 500;
-var MAX_POSTER_LOOKUPS = 8;
-var FINISHED = 0.9;
-var readJson = (key, fallback) => {
-  try {
-    const v = JSON.parse(kino.storage.get(key) || "null");
-    return v && typeof v === "object" ? v : fallback;
-  } catch (_) {
-    return fallback;
-  }
-};
-async function tmdbInfo(kind, id, cache) {
-  const key = kind + ":" + id;
-  if (cache[key]) return cache[key];
-  if (typeof kino.tmdb !== "function") return null;
-  let d;
-  try {
-    d = await kino.tmdb((kind === "movie" ? "/movie/" : "/tv/") + id, { language: "es" });
-  } catch (_) {
-    return null;
-  }
-  const info = { poster: d && d.poster_path ? "https://image.tmdb.org/t/p/w342" + d.poster_path : null, adult: !!(d && d.adult) };
-  cache[key] = info;
-  return info;
-}
-async function syncActivity(now = Date.now()) {
-  if (typeof kino.library !== "object") return 0;
-  const last = Number(kino.storage.get(LAST_KEY) || 0);
-  if (now - last < EVERY_MS) return 0;
-  let watched;
-  try {
-    watched = await kino.library.watched({ limit: 50, sinceMs: last ? last - DAY_MS : void 0 });
-  } catch (_) {
-    return 0;
-  }
-  const sent = readJson(SENT_KEY, {});
-  const posters = readJson(POSTERS_KEY, {});
-  const items = [];
-  let lookups = 0;
-  for (const w of watched) {
-    const tmdb = Number(w.ids && w.ids.tmdb);
-    if (!Number.isInteger(tmdb) || tmdb <= 0 || w.kind !== "movie" && w.kind !== "series") continue;
-    if (!(Number(w.progress) >= FINISHED)) continue;
-    const sig = w.kind === "series" ? `${w.season ?? ""}x${w.episode ?? ""}` : "m";
-    const key = w.kind + ":" + tmdb;
-    if (sent[key] === sig) continue;
-    if (!posters[key] && lookups++ >= MAX_POSTER_LOOKUPS) continue;
-    const info = await tmdbInfo(w.kind, tmdb, posters);
-    if (!info) continue;
-    if (info.adult) {
-      sent[key] = sig;
-      continue;
-    }
-    const item = { kind: w.kind, tmdbId: tmdb, title: w.title, watchedAtMs: w.watchedAtMs || now, poster: info.poster || void 0 };
-    if (w.kind === "series" && Number.isInteger(w.season) && Number.isInteger(w.episode)) {
-      item.season = w.season;
-      item.episode = w.episode;
-    }
-    items.push({ item, key, sig });
-  }
-  kino.storage.set(POSTERS_KEY, JSON.stringify(trim(posters, 200)), { ttlMs: 30 * DAY_MS });
-  if (items.length) {
-    try {
-      await call("/activity", { method: "POST", json: { items: items.map((i) => i.item) } });
-    } catch (_) {
-      return 0;
-    }
-    for (const i of items) sent[i.key] = i.sig;
-  }
-  kino.storage.set(SENT_KEY, JSON.stringify(trim(sent, MAX_SENT)));
-  kino.storage.set(LAST_KEY, String(now));
-  return items.length;
-}
-function trim(map, max) {
-  const keys = Object.keys(map);
-  return keys.length <= max ? map : Object.fromEntries(keys.slice(-max).map((k) => [k, map[k]]));
+// src/lines.js
+var BLANK_RUN = /\n[ \t]*(?:\n[ \t]*)+\n/g;
+function tidyLines(text) {
+  return String(text ?? "").replace(/\r\n?/g, "\n").replace(BLANK_RUN, "\n\n").trim();
 }
 
 // src/swear.js
@@ -2547,8 +1367,10 @@ function maskWith(text, list) {
   const out = text.replace(WORD, (w) => set.has(fold(w)) ? (hit = true, MASK) : w);
   return { text: out, hit };
 }
+var localMask = (text) => maskWith(text, /* @__PURE__ */ new Set([...COMMON, ...learned()]));
+var cleanLocal = (text) => localMask(text).text;
 async function clean(text) {
-  const local = maskWith(text, /* @__PURE__ */ new Set([...COMMON, ...learned()]));
+  const local = localMask(text);
   if (local.hit || typeof kino.ai !== "object") return local.text;
   let answer;
   try {
@@ -2574,6 +1396,1738 @@ async function clean(text) {
   if (!found.length) return local.text;
   learn(found);
   return maskWith(text, new Set(found)).text;
+}
+
+// src/direct.js
+var SETTING = "directPublishers";
+var MAX_ALLOWED = 20;
+var BUDGET_MS = 8500;
+var MIN_POST_MS = 1500;
+function keyOf(repo) {
+  const plain = plainRepo(repo) || String(repo || "").trim();
+  const parts = plain.split("/");
+  return [...parts.slice(0, 2).map((p) => p.toLowerCase()), ...parts.slice(2)].join("/");
+}
+function allowedPublishers() {
+  let list;
+  try {
+    if (typeof kino.config !== "object" || !kino.config || typeof kino.config.get !== "function") return [];
+    list = kino.config.get(SETTING);
+  } catch (_) {
+    return [];
+  }
+  if (!Array.isArray(list)) return [];
+  return list.filter((e) => e && typeof e === "object" && typeof e.repo === "string" && e.repo.trim()).map((e) => ({ repo: e.repo.trim(), ...typeof e.name === "string" && e.name.trim() ? { name: e.name.trim() } : {} }));
+}
+function isAllowed(repo) {
+  if (!plainRepo(repo)) return false;
+  const key = keyOf(repo);
+  return allowedPublishers().some((e) => keyOf(e.repo) === key);
+}
+function withAllowed(list, repo, name) {
+  const key = keyOf(repo);
+  const rest = (Array.isArray(list) ? list : []).filter((e) => e && keyOf(e.repo) !== key);
+  const entry = { repo: String(repo), ...name ? { name: String(name) } : {} };
+  return [...rest, entry].slice(-MAX_ALLOWED);
+}
+async function directBody(d) {
+  if (d.kind === "card" && d.card) {
+    return postBody({ text: cleanLocal(tidyLines(d.text || "")), card: draftCard(d) });
+  }
+  const attach = await titleAttachment(d.title, { poster: false });
+  const text = cleanLocal(tidyLines(reviewText(d)));
+  if (!canPublish(text, attach)) return null;
+  return postBody({ text, attach });
+}
+var WARNING_KEY = "directWarning";
+var int = (v) => Number.isInteger(v) ? v : void 0;
+function keepWarning(m) {
+  if (!m || typeof m !== "object") return;
+  const w = { strikes: int(m.strikes), limit: int(m.limit), mutedUntil: int(m.mutedUntil) };
+  try {
+    kino.storage.set(WARNING_KEY, JSON.stringify(w));
+  } catch (_) {
+  }
+}
+function takeDirectWarning() {
+  let raw;
+  try {
+    raw = kino.storage.get(WARNING_KEY);
+  } catch (_) {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    kino.storage.remove(WARNING_KEY);
+  } catch (_) {
+  }
+  try {
+    const w = JSON.parse(raw);
+    return w && typeof w === "object" ? w : null;
+  } catch (_) {
+    return null;
+  }
+}
+var unanswered = (e) => e instanceof ApiError && e.code === "offline" && (!e.status || e.status >= 500);
+async function publishDirect(d, started = Date.now(), report = {}, onPost = () => {
+}) {
+  let posting = false;
+  try {
+    const json = await directBody(d);
+    if (!json) return null;
+    const left = BUDGET_MS - (Date.now() - started);
+    if (left < MIN_POST_MS) return null;
+    posting = true;
+    onPost();
+    const post2 = await call("/posts", { method: "POST", json, timeoutMs: left, posters: false });
+    posting = false;
+    if (post2 && post2.moderation) keepWarning(post2.moderation);
+    const id = Number(post2 && post2.id);
+    if (Number.isInteger(id)) return id;
+    report.maybeSent = true;
+    return null;
+  } catch (e) {
+    if (posting && unanswered(e)) report.maybeSent = true;
+    return null;
+  }
+}
+
+// src/wall.js
+var DRAFTS_KEY = "wallDrafts1";
+var MAX_DRAFTS = 5;
+var MAX_TEXT = 500;
+var MAX_LINK = 500;
+var MAX_FROM = 40;
+var DRAFT_TTL_MS = 14 * 24 * 3600 * 1e3;
+var ok2 = (v) => v !== void 0 && v !== null;
+var tidy2 = (s) => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").replace(/\n{3,}/g, "\n\n").trim();
+function cleanLink(v) {
+  if (!ok2(v)) return null;
+  const s = String(v).trim();
+  if (s.length > MAX_LINK) return null;
+  let u;
+  try {
+    u = new URL(s);
+  } catch (_) {
+    return null;
+  }
+  if (u.protocol !== "https:" || !u.hostname.includes(".") || u.username || u.password) return null;
+  return u.toString();
+}
+function checkShare(arg) {
+  const a = arg && typeof arg === "object" ? arg : {};
+  const text = ok2(a.text) ? tidy2(a.text).slice(0, MAX_TEXT) : "";
+  let title = null;
+  if (ok2(a.title)) {
+    const t = a.title;
+    const tmdb = Number(t.tmdb);
+    if (t.kind !== "movie" && t.kind !== "series" || !Number.isInteger(tmdb) || tmdb <= 0 || tmdb >= 1e9) return "bad_title";
+    title = { kind: t.kind, tmdb };
+    if (t.kind === "series" && Number.isInteger(t.season) && t.season > 0 && Number.isInteger(t.episode) && t.episode > 0) {
+      title.season = t.season;
+      title.episode = t.episode;
+    }
+  }
+  const link = ok2(a.link) ? cleanLink(a.link) : null;
+  if (ok2(a.link) && !link) return "bad_link";
+  const from = ok2(a.from) ? tidy2(a.from).replace(/\s+/g, " ").slice(0, MAX_FROM) : "";
+  if (!text && !title && !link) return "empty";
+  return { text, title, link, from };
+}
+function readDrafts(now = Date.now()) {
+  let list;
+  try {
+    list = JSON.parse(kino.storage.get(DRAFTS_KEY) || "[]");
+  } catch (_) {
+    list = [];
+  }
+  return (Array.isArray(list) ? list : []).filter((d) => d && typeof d.id === "string" && now - Number(d.at || 0) < DRAFT_TTL_MS);
+}
+function writeDrafts(list) {
+  try {
+    kino.storage.set(DRAFTS_KEY, JSON.stringify(list.slice(0, MAX_DRAFTS)));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+function patchDraft(id, change) {
+  writeDrafts(readDrafts().map((d) => d.id === id ? { ...d, ...change } : d));
+}
+var draftById = (id) => readDrafts().find((d) => d.id === String(id)) || null;
+function removeDraft(id) {
+  writeDrafts(readDrafts().filter((d) => d.id !== String(id)));
+}
+function markNoticed(ids) {
+  const set = new Set(ids);
+  writeDrafts(readDrafts().map((d) => set.has(d.id) ? { ...d, noticed: true } : d));
+}
+var newId = (now) => now.toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+function keepDraft(draft, kept) {
+  const isNew = !kept.some((d) => d.id === draft.id);
+  const rest = kept.filter((d) => d.id !== draft.id);
+  if (!writeDrafts([draft, ...rest])) {
+    const card = draft.card && draft.card.image ? (({ image, ...c }) => c)(draft.card) : null;
+    if (!card || !writeDrafts([{ ...draft, card }, ...rest])) throw new Error("storage_full");
+  }
+  return { status: "draft", draftId: draft.id, pending: Math.min(kept.length + (isNew ? 1 : 0), MAX_DRAFTS) };
+}
+var stamp = (caller) => ({ id: caller.id, repo: caller.repo, name: caller.name });
+var wantsDirect = (arg, caller) => !!caller && !caller.adult && !!arg && arg.publish === true;
+async function keepOrPublish(fresh, caller, same, intoTwin, now, started) {
+  const kept = readDrafts(now);
+  const twin = kept.find(same);
+  const draft = twin ? intoTwin(twin) : { id: newId(now), at: now, ...fresh };
+  const answer = keepDraft(draft, kept);
+  if (!fresh.direct || !caller || caller.adult || !isAllowed(caller.repo)) return answer;
+  const report = {};
+  let marked = false;
+  const mark = () => {
+    marked = true;
+    patchDraft(draft.id, { maybeSent: true });
+  };
+  const postId = await publishDirect(fresh, started, report, mark);
+  if (postId !== null) {
+    removeDraft(draft.id);
+    return { status: "published", postId };
+  }
+  if (marked && !report.maybeSent && draft.maybeSent !== true) patchDraft(draft.id, { maybeSent: void 0 });
+  return answer;
+}
+async function proto_wall_share(arg, ctx) {
+  const started = Date.now();
+  await null;
+  const share = checkShare(arg);
+  if (typeof share === "string") throw new Error(share);
+  const caller = callerOf(ctx);
+  const now = Date.now();
+  const same = (d) => d.kind !== "card" && d.text === share.text && d.link === share.link && JSON.stringify(d.title) === JSON.stringify(share.title);
+  const fresh = {
+    ...share,
+    ...caller ? { from: caller.name || share.from, caller: stamp(caller) } : {},
+    direct: wantsDirect(arg, caller)
+  };
+  const intoTwin = (twin) => ({ ...twin, direct: fresh.direct, ...caller ? { from: fresh.from, caller: fresh.caller } : {} });
+  return keepOrPublish(fresh, caller, same, intoTwin, now, started);
+}
+async function proto_wall_card(arg, ctx) {
+  const started = Date.now();
+  await null;
+  const caller = callerOf(ctx);
+  if (!caller) throw new Error("no_caller");
+  if (caller.adult) throw new Error("adult_caller");
+  const checked = checkCard(arg);
+  if (typeof checked === "string") throw new Error(checked);
+  const { card, text } = checked;
+  const now = Date.now();
+  const who = (c) => c.repo ? "r:" + c.repo : "i:" + c.id;
+  const route = JSON.stringify(card.route);
+  const same = (d) => d.kind === "card" && d.caller && d.card && who(d.caller) === who(caller) && d.card.title === card.title && JSON.stringify(d.card.route) === route;
+  const fresh = { kind: "card", card, text, from: caller.name, caller: stamp(caller), direct: wantsDirect(arg, caller) };
+  return keepOrPublish(fresh, caller, same, (twin) => ({ ...twin, ...fresh }), now, started);
+}
+var draftExcerpt = (d) => d.text || d.card && d.card.title || d.link || "";
+function draftNotice(d) {
+  const who = d.from || "";
+  const excerpt = draftExcerpt(d).slice(0, 120);
+  return {
+    id: "dr" + d.id,
+    title: who ? `${who} quiere publicar en tu muro` : "Tienes una publicación por revisar",
+    titleEn: who ? `${who} wants to post on your wall` : "You have a post to review",
+    text: excerpt ? excerpt : "Revísala y publícala si quieres",
+    textEn: excerpt ? excerpt : "Review it and post it if you like",
+    go: { screen: { route: "draft", args: { id: d.id } } }
+  };
+}
+async function postDraftNotices() {
+  if (typeof kino.notifications !== "object") return 0;
+  const fresh = readDrafts().filter((d) => !d.noticed).reverse();
+  const done = [];
+  for (const d of fresh) {
+    try {
+      await kino.notifications.post(draftNotice(d));
+    } catch (_) {
+      break;
+    }
+    done.push(d.id);
+  }
+  if (done.length) markNoticed(done);
+  return done.length;
+}
+async function titleAttachment(title, { poster = true } = {}) {
+  if (!title || typeof kino.tmdb !== "function") return null;
+  try {
+    const info = await kino.tmdb((title.kind === "movie" ? "/movie/" : "/tv/") + title.tmdb, { language: "es" });
+    let attach = fromTmdb(info && { ...info, id: title.tmdb }, title.kind);
+    if (attach && poster) attach = await withPoster(attach);
+    if (attach && title.season && title.episode) attach = { ...attach, season: title.season, episode: title.episode };
+    return attach;
+  } catch (_) {
+    return null;
+  }
+}
+function draftImage(draftId) {
+  const d = draftById(draftId);
+  return d && d.card && typeof d.card.image === "string" && d.card.image || null;
+}
+function draftCard(d) {
+  const c = d.card;
+  const caller = d.caller || {};
+  return {
+    plugin: { repo: caller.repo || null, name: caller.name || d.from || caller.id || T.pluginFallback[0] },
+    title: c.title,
+    ...c.description ? { description: c.description } : {},
+    ...c.image ? { image: c.image } : {},
+    ...c.route ? { route: { name: c.route.name, args: c.route.args || {} } } : {},
+    query: c.query || cut(c.title, MAX.query)
+  };
+}
+var THUMBNAIL = { maxWidth: 200, maxBytes: 16384 };
+async function thumbnailDraft(d) {
+  const image = d.card && d.card.image;
+  if (typeof image !== "string" || !image.startsWith("https://")) return;
+  if (!kino.image || typeof kino.image !== "object" || typeof kino.image.thumbnail !== "function") return;
+  let thumb;
+  try {
+    thumb = await kino.image.thumbnail(image, { ...THUMBNAIL });
+  } catch (_) {
+    return;
+  }
+  if (typeof thumb !== "string" || !thumb.startsWith("data:") || !checkImage(thumb)) return;
+  writeDrafts(readDrafts().map((x) => x.id === d.id && x.card ? { ...x, card: { ...x.card, image: thumb } } : x));
+}
+var reviewText = (d) => [d.text, d.link && !(d.text || "").includes(d.link) ? d.link : ""].filter(Boolean).join("\n").slice(0, MAX_TEXT);
+async function reviewState(d) {
+  if (d.kind === "card" && d.card) {
+    await thumbnailDraft(d);
+    const { plugin } = draftCard(d);
+    const attachCard = { draftId: d.id, title: d.card.title, ...d.card.description ? { description: d.card.description } : {}, plugin };
+    return {
+      state: { attach: null, attachCard, draftId: d.id, maybeSent: d.maybeSent === true, picking: false, inputs: { postText: d.text || "", titleSearch: "" } },
+      ui: [{ open: "composer" }]
+    };
+  }
+  const attach = await titleAttachment(d.title);
+  const text = reviewText(d);
+  return {
+    state: { attach, attachCard: null, draftId: d.id, maybeSent: d.maybeSent === true, picking: false, inputs: { postText: text, titleSearch: "" } },
+    ui: [{ open: "composer" }]
+  };
+}
+
+// src/ui/kit.js
+var isTv = (ctx) => ctx.device === "tv";
+var barPadding = (ctx) => isTv(ctx) ? { padding: { x: 24, y: 12 } } : {};
+var Txt = ([es, en], props = {}) => ({ type: "Text", text: es, textEn: en, ...props });
+var Raw = (text, props = {}) => ({ type: "Text", text, textEn: text, ...props });
+var AVATAR_COLORS = ["primaryContainer", "secondary", "primary"];
+function Avatar(user, radius = 20, props = {}) {
+  const letter = (String(user.name || "?").trim().replace(/^@/, "")[0] || "?").toUpperCase();
+  return {
+    type: "CircleAvatar",
+    text: letter,
+    textEn: letter,
+    radius,
+    backgroundColor: AVATAR_COLORS[Math.abs(Number(user.id) || 0) % AVATAR_COLORS.length],
+    labelText: user.name,
+    labelTextEn: user.name,
+    ...props
+  };
+}
+function NameBlock(user, extra = [], { time } = {}) {
+  const meta = [
+    ...user.handle ? [Raw("@" + user.handle, { style: "caption", color: "muted", maxLines: 1 })] : [],
+    ...user.handle && time ? [Raw("·", { style: "caption", color: "muted" })] : [],
+    ...time ? [{ type: "Text", time, style: "caption", color: "muted" }] : []
+  ];
+  return {
+    type: "Column",
+    flex: 1,
+    gap: 0,
+    children: [
+      Raw(user.name || "", { style: "h5", bold: true, maxLines: 1 }),
+      ...meta.length ? [{ type: "Row", gap: 4, crossAxisAlignment: "center", children: meta }] : [],
+      ...extra
+    ]
+  };
+}
+function Tag([es, en], icon, props = {}) {
+  return {
+    type: "Row",
+    gap: 4,
+    crossAxisAlignment: "center",
+    color: "primaryContainer",
+    borderRadius: "full",
+    padding: { x: 8, y: 2 },
+    children: [{ type: "Icon", name: icon }, { type: "Text", text: es, textEn: en, style: "caption" }],
+    ...props
+  };
+}
+var Button = (label2, onPressed, props = {}) => ({ type: "ElevatedButton", labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
+var TextBtn = (label2, onPressed, props = {}) => ({ type: "TextButton", labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
+var IconBtn = (icon, label2, onPressed, props = {}) => ({ type: "IconButton", icon, labelText: label2[0], labelTextEn: label2[1], onPressed, ...props });
+var pagePadding = { compact: { x: 12, y: 12 }, medium: { x: 24, y: 12 }, expanded: { x: 32, y: 16 } };
+var count = (n) => n > 999 ? Math.floor(n / 100) / 10 + "k" : String(n);
+
+// src/moderation.js
+var LIMIT = 3;
+function mutedUntil(until, now = Date.now()) {
+  const n = Number(until);
+  return Number.isInteger(n) && n > now ? n : 0;
+}
+function muteLine(until, props = {}) {
+  const [es, en] = T.mutedUntilLine;
+  return { type: "Text", text: es, textEn: en, time: Number(until), timeFormat: "clock", style: "caption", color: "error", ...props };
+}
+var okButton = () => ({ label: T.ok[0], labelEn: T.ok[1], variant: "primary" });
+function muteDialog(until) {
+  const [es, en] = T.mutedUntilDialog;
+  return {
+    body: [
+      { type: "Text", text: T.mutedStarted[0], textEn: T.mutedStarted[1] },
+      { type: "Text", text: es, textEn: en, time: Number(until), timeFormat: "clock" }
+    ],
+    buttons: [okButton()]
+  };
+}
+function moderationDialog(response) {
+  const m = response && response.moderation;
+  if (!m || typeof m !== "object") return null;
+  if (Number.isInteger(m.mutedUntil) && m.mutedUntil > 0) return muteDialog(m.mutedUntil);
+  const limit = Number.isInteger(m.limit) && m.limit > 0 ? m.limit : LIMIT;
+  const n = Number.isInteger(m.strikes) && m.strikes > 0 ? Math.min(m.strikes, limit) : 1;
+  const [es, en] = T.strikeWarning(n, limit);
+  return { body: es, bodyEn: en, buttons: [okButton()] };
+}
+function moderationToast(response) {
+  const m = response && response.moderation;
+  if (!m || typeof m !== "object") return null;
+  return mutedUntil(m.mutedUntil) ? T.panelMutedToast : T.panelOffensiveToast;
+}
+function moderationState(response, now = Date.now()) {
+  const m = response && response.moderation;
+  const until = m && mutedUntil(m.mutedUntil, now);
+  return until ? { mutedUntil: until } : {};
+}
+
+// src/ui/cards.js
+function authorRow(post2, ctx, me, pfx) {
+  const mine = me && post2.user.id === me.id;
+  return {
+    type: "Row",
+    gap: 12,
+    crossAxisAlignment: "center",
+    children: [
+      { type: "Stack", key: `${pfx}av-${post2.type}-${post2.id}`, onTap: { event: "openUser", arg: String(post2.user.id) }, children: [Avatar(post2.user)] },
+      NameBlock(
+        post2.user,
+        post2.community && String(post2.community.id) !== String(ctx.community) ? [Txt([`en ${post2.community.name}`, `in ${post2.community.name}`], { style: "caption", color: "primary", maxLines: 1 })] : [],
+        { time: post2.createdAt }
+      ),
+      ...mine && !isTv(ctx) ? [IconBtn("more_vert", T.postMenu, { event: "postMenu", arg: String(post2.id) }, { key: pfx + "menu-" + post2.id })] : []
+    ]
+  };
+}
+function linkCard(post2, ctx, pfx) {
+  const link = post2.link;
+  if (!link) return null;
+  const host = (link.url.match(/^https?:\/\/([^/?#]+)/i) || [])[1] || link.url;
+  const https = /^https:\/\//i.test(link.url);
+  if (link.tmdb && link.title) {
+    const open2 = { go: { titleByIds: { tmdb: link.tmdb.id, kind: link.tmdb.kind, title: link.title.slice(0, 120) } } };
+    const year = /^\d{4}$/.test(String(link.desc || "")) ? Number(link.desc) : void 0;
+    return {
+      type: "Card",
+      key: pfx + "link-" + post2.id,
+      variant: "outlined",
+      padding: 12,
+      onTap: open2,
+      children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+        {
+          type: "Image",
+          width: { compact: 64, expanded: 80 },
+          aspect: "2:3",
+          borderRadius: "small",
+          alt: link.title,
+          altEn: link.title,
+          ...link.image ? { url: link.image } : {},
+          fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: link.tmdb.kind === "movie" ? "movie" : "tv", margin: 12 }] }
+        },
+        { type: "Column", flex: 1, gap: 4, children: [
+          Raw(link.title, { style: "h5", bold: true, maxLines: 2 }),
+          year || !link.desc ? Txt(T.titleLine({ kind: link.tmdb.kind, year }), { style: "caption", color: "muted" }) : Raw(link.desc, { style: "caption", color: "muted" }),
+          { type: "Row", children: [{
+            type: "Button",
+            variant: "secondary",
+            key: pfx + "open-" + post2.id,
+            icon: "play",
+            labelText: T.openInKino[0],
+            labelTextEn: T.openInKino[1],
+            onPressed: open2
+          }] }
+        ] }
+      ] }]
+    };
+  }
+  const tap = https && !isTv(ctx) ? { go: { url: { href: link.url, title: (link.title || host).slice(0, 60) } } } : void 0;
+  if (!link.title) {
+    return {
+      type: "Card",
+      key: pfx + "link-" + post2.id,
+      variant: "outlined",
+      padding: 12,
+      onTap: tap,
+      children: [{ type: "Row", gap: 8, crossAxisAlignment: "center", children: [{ type: "Icon", name: "link", color: "primary" }, Raw(host, { color: "primary", maxLines: 1, flex: 1 })] }]
+    };
+  }
+  return {
+    type: "Card",
+    key: pfx + "link-" + post2.id,
+    variant: "outlined",
+    flush: true,
+    onTap: tap,
+    children: [
+      ...link.image ? [{
+        type: "Image",
+        url: link.image,
+        aspect: "16:9",
+        alt: link.title,
+        altEn: link.title,
+        fallback: { type: "Stack", color: "surfaceVariant", children: [{ type: "Icon", name: "link", margin: 16 }] }
+      }] : [],
+      { type: "Column", padding: 12, gap: 4, children: [
+        Raw((link.site || host).toUpperCase(), { style: "label", color: "muted", maxLines: 1 }),
+        Raw(link.title, { style: "h5", bold: true, maxLines: 2 }),
+        ...link.desc ? [Raw(link.desc, { style: "caption", color: "muted", maxLines: 2 })] : []
+      ] }
+    ]
+  };
+}
+function shareCard(post2, ctx, pfx) {
+  const c = slimCard(post2.card);
+  if (!c) return null;
+  const open2 = cardGo(post2);
+  const image = cardImageUrl(c.i);
+  return {
+    type: "Card",
+    key: pfx + "card-" + post2.id,
+    variant: "outlined",
+    padding: 12,
+    ...isTv(ctx) ? {} : { onTap: open2 },
+    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      ...image ? [{ type: "Image", url: image, width: { compact: 64, expanded: 80 }, borderRadius: "small", alt: c.t, altEn: c.t }] : [],
+      { type: "Column", flex: 1, gap: 4, children: [
+        Raw(c.t, { style: "h5", bold: true, maxLines: 2 }),
+        ...c.d ? [Raw(c.d, { style: "caption", color: "muted", maxLines: 2 })] : [],
+        Txt(T.draftFrom(c.n), { style: "label", color: "muted", maxLines: 1 }),
+        { type: "Row", children: [{
+          type: "Button",
+          variant: "secondary",
+          key: pfx + "open-" + post2.id,
+          icon: "open_in_new",
+          labelText: T.openIn(c.n)[0],
+          labelTextEn: T.openIn(c.n)[1],
+          onPressed: open2
+        }] }
+      ] }
+    ] }]
+  };
+}
+function coinable(post2, ctx, me) {
+  return !!ctx.coins && !!(post2.user && post2.user.coinsAccount) && !(me && String(post2.user.id) === String(me.id));
+}
+var coinTotal = (post2, ctx) => {
+  const n = ctx.coinTotals && ctx.coinTotals[String(post2.id)];
+  return Number.isFinite(n) && n > 0 ? n : void 0;
+};
+function coinButton(post2, ctx, pfx) {
+  const total = coinTotal(post2, ctx);
+  return {
+    type: "TextButton",
+    key: pfx + "coin-" + post2.id,
+    icon: "star",
+    color: "muted",
+    labelText: total ? count(total) : T.coinShort[0],
+    labelTextEn: total ? count(total) : T.coinShort[1],
+    tooltip: T.giveCoin[0],
+    tooltipEn: T.giveCoin[1],
+    onPressed: { event: "coin", arg: String(post2.id) }
+  };
+}
+function actionsRow(post2, ctx, pfx, full, me) {
+  const likeLabel = post2.liked ? ["Ya no me gusta", "Unlike"] : ["Me gusta", "Like"];
+  return {
+    type: "Row",
+    gap: 4,
+    crossAxisAlignment: "center",
+    children: [
+      {
+        type: "TextButton",
+        key: pfx + "like-" + post2.id,
+        icon: "heart",
+        labelText: post2.likes ? count(post2.likes) : likeLabel[0],
+        labelTextEn: post2.likes ? count(post2.likes) : likeLabel[1],
+        selected: !!post2.liked,
+        color: post2.liked ? "primary" : "muted",
+        tooltip: likeLabel[0],
+        tooltipEn: likeLabel[1],
+        onPressed: { event: post2.liked ? "unlike" : "like", arg: String(post2.id) }
+      },
+      ...coinable(post2, ctx, me) ? [coinButton(post2, ctx, pfx)] : [],
+      ...full ? [] : [{
+        type: "TextButton",
+        key: pfx + "comments-" + post2.id,
+        color: "muted",
+        labelText: post2.comments ? `${count(post2.comments)} ${post2.comments === 1 ? "comentario" : "comentarios"}` : T.comment[0],
+        labelTextEn: post2.comments ? `${count(post2.comments)} ${post2.comments === 1 ? "comment" : "comments"}` : T.comment[1],
+        onPressed: { event: "openPost", arg: String(post2.id) }
+      }]
+    ]
+  };
+}
+function postCard(post2, ctx, me, { selected = false, full = false } = {}) {
+  const tv = isTv(ctx);
+  const pfx = full ? "t-" : "";
+  return {
+    type: "Card",
+    key: pfx + "post-" + post2.id,
+    padding: { x: 16, y: 12 },
+    gap: 12,
+    elevation: 1,
+    // On the TV the whole card is one stop: OK opens it beside the feed (its likes and comments live there).
+    ...tv && !full ? { onTap: { event: "openPost", arg: String(post2.id) }, selected } : {},
+    children: [
+      authorRow(post2, ctx, me, pfx),
+      // The text as written, line breaks included (a post with an attached title may have none).
+      ...post2.text ? [Raw(post2.text, { maxLines: full ? void 0 : tv ? 4 : 12 })] : post2.link && post2.link.tmdb ? [Txt(likedLine(post2), { maxLines: full ? void 0 : 2 })] : [],
+      ...post2.card ? [shareCard(post2, ctx, pfx)].filter(Boolean) : post2.link ? [linkCard(post2, ctx, pfx)] : [],
+      ...!tv || full ? [actionsRow(post2, ctx, pfx, full, me)] : [{ type: "Row", gap: 16, children: [
+        { type: "Row", gap: 4, crossAxisAlignment: "center", children: [{ type: "Icon", name: "heart", color: post2.liked ? "error" : "muted" }, Raw(count(post2.likes || 0), { style: "caption", color: "muted" })] },
+        // The TV only shows a known coin total, like the likes: giving happens in the open post beside the feed.
+        ...coinable(post2, ctx, me) && coinTotal(post2, ctx) ? [{
+          type: "Row",
+          key: "coinTotal-" + post2.id,
+          gap: 4,
+          crossAxisAlignment: "center",
+          children: [{ type: "Icon", name: "star", color: "muted" }, Raw(count(coinTotal(post2, ctx)), { style: "caption", color: "muted" })]
+        }] : [],
+        ...post2.comments ? [Txt([`${count(post2.comments)} ${post2.comments === 1 ? "comentario" : "comentarios"}`, `${count(post2.comments)} ${post2.comments === 1 ? "comment" : "comments"}`], { style: "caption", color: "muted" })] : []
+      ] }]
+    ]
+  };
+}
+function activityCard(item) {
+  const line = watchedLine(item);
+  const many = item.episodes > 1 ? [` · ${item.episodes} episodios`, ` · ${item.episodes} episodes`] : ["", ""];
+  const open2 = { go: { titleByIds: { tmdb: item.tmdbId, kind: item.kind, title: item.title.slice(0, 120) } } };
+  if (item.still) {
+    return {
+      type: "Card",
+      key: "act-" + item.id,
+      flush: true,
+      elevation: 1,
+      onTap: open2,
+      children: [
+        { type: "Row", gap: 8, crossAxisAlignment: "center", padding: { x: 16, y: 12 }, children: [
+          Avatar(item.user, 16),
+          { type: "Column", flex: 1, gap: 0, children: [
+            Raw(item.user.name, { style: "label", bold: true, maxLines: 1 }),
+            Txt([line[0] + many[0], line[1] + many[1]], { style: "caption", color: "muted", maxLines: 1 })
+          ] },
+          { type: "Text", time: item.createdAt, style: "caption", color: "muted" }
+        ] },
+        {
+          type: "Image",
+          url: item.still,
+          aspect: "16:9",
+          alt: item.episodeTitle || item.title,
+          altEn: item.episodeTitle || item.title,
+          fallback: { type: "Stack", color: "surfaceVariant", children: [{ type: "Icon", name: "tv", margin: 16 }] }
+        },
+        { type: "Row", gap: 12, crossAxisAlignment: "center", padding: { x: 16, y: 12 }, children: [
+          { type: "Column", flex: 1, gap: 4, children: [
+            Raw(item.title, { style: "h5", bold: true, maxLines: 1 }),
+            ...item.episodeTitle ? [Raw(item.episodeTitle, { style: "caption", color: "muted", maxLines: 1 })] : []
+          ] },
+          { type: "Icon", name: "play", color: "primary" }
+        ] }
+      ]
+    };
+  }
+  return {
+    type: "Card",
+    key: "act-" + item.id,
+    background: "surfaceVariant",
+    padding: 12,
+    elevation: 0,
+    onTap: open2,
+    children: [{
+      type: "Row",
+      gap: 12,
+      crossAxisAlignment: "center",
+      children: [
+        {
+          type: "Image",
+          width: { compact: 64, expanded: 80 },
+          aspect: "2:3",
+          borderRadius: "small",
+          alt: item.title,
+          altEn: item.title,
+          ...item.poster ? { url: item.poster } : {},
+          fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: item.kind === "movie" ? "movie" : "tv", margin: 12 }] }
+        },
+        { type: "Column", flex: 1, gap: 4, children: [
+          { type: "Row", gap: 8, crossAxisAlignment: "center", children: [Avatar(item.user, 12), Raw(item.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 })] },
+          Txt([line[0] + many[0], line[1] + many[1]], { style: "caption", color: "muted" }),
+          Raw(item.title, { style: "h4", maxLines: 2 }),
+          { type: "Text", time: item.createdAt, style: "caption", color: "muted" }
+        ] },
+        { type: "Icon", name: "play", color: "primary" }
+      ]
+    }]
+  };
+}
+function suggestionsCard(item, ctx) {
+  return {
+    type: "Card",
+    key: "sugg",
+    variant: "outlined",
+    padding: 16,
+    gap: 12,
+    children: [
+      Txt(["Personas que podrías seguir", "People you could follow"], { style: "h5", bold: true }),
+      ...item.people.map((p) => ({
+        type: "Row",
+        key: "sugg-" + p.id,
+        gap: 12,
+        crossAxisAlignment: "center",
+        children: [
+          { type: "Stack", onTap: { event: "openUser", arg: String(p.id) }, children: [Avatar(p, 18)] },
+          NameBlock(p, p.bio ? [Raw(p.bio, { style: "caption", color: "muted", maxLines: 1 })] : []),
+          Button(T.follow, { event: "follow", arg: String(p.id) }, { key: "sfollow-" + p.id })
+        ]
+      }))
+    ]
+  };
+}
+function feedItem(item, ctx, me, selectedId) {
+  if (item.type === "post") return postCard(item, ctx, me, { selected: String(item.id) === String(selectedId) });
+  if (item.type === "activity") return activityCard(item);
+  if (item.type === "suggestions") return suggestionsCard(item, ctx);
+  return null;
+}
+function commentRow(c, me) {
+  const mine = !!me && String(c.user.id) === String(me.id);
+  const when = { type: "Text", time: c.createdAt, style: "caption", color: "muted" };
+  const bubble = {
+    type: "Card",
+    flex: 5,
+    color: mine ? "primaryContainer" : "surfaceVariant",
+    padding: { x: 12, y: 8 },
+    gap: 4,
+    // The pointed corner sits on the speaker's side.
+    borderRadius: mine ? { topStart: "large", topEnd: "small", bottomStart: "large", bottomEnd: "large" } : { topStart: "small", topEnd: "large", bottomStart: "large", bottomEnd: "large" },
+    children: mine ? [Raw(c.text), { type: "Row", mainAxisAlignment: "end", children: [when] }] : [{ type: "Row", gap: 8, children: [Raw(c.user.name, { style: "label", bold: true, maxLines: 1, flex: 1 }), when] }, Raw(c.text)]
+  };
+  const room = { type: "Spacer", flex: 1 };
+  return {
+    type: "Row",
+    key: "c" + c.id,
+    gap: 8,
+    crossAxisAlignment: "start",
+    children: mine ? [room, bubble] : [{ type: "Stack", onTap: { event: "openUser", arg: String(c.user.id) }, children: [Avatar(c.user, 16)] }, bubble, room]
+  };
+}
+
+// src/ui/views.js
+var MAX_TEXT2 = 500;
+var muted = (s) => mutedUntil(s.mutedUntil);
+function composerPrompt(s) {
+  const until = muted(s);
+  return {
+    type: "Card",
+    key: "prompt",
+    variant: "outlined",
+    padding: 12,
+    borderRadius: "large",
+    onTap: { ui: [{ open: "composer" }] },
+    ...until ? { enabledAt: until } : {},
+    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      Avatar(s.me),
+      until ? muteLine(until, { flex: 1 }) : Txt(T.prompt, { color: "muted", flex: 1 }),
+      { type: "Icon", name: "edit", color: "primary" }
+    ] }]
+  };
+}
+function titleRow(t, props = {}, trailing = []) {
+  return {
+    type: "Card",
+    variant: "outlined",
+    padding: 8,
+    ...props,
+    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      {
+        type: "Image",
+        width: 40,
+        aspect: "2:3",
+        borderRadius: "small",
+        alt: t.title,
+        altEn: t.title,
+        ...t.poster ? { url: t.poster } : {},
+        fallback: { type: "Stack", color: "primaryContainer", children: [{ type: "Icon", name: t.kind === "movie" ? "movie" : "tv", margin: 8 }] }
+      },
+      { type: "Column", flex: 1, gap: 4, children: [
+        Raw(t.title, { style: "h5", bold: true, maxLines: 2 }),
+        Txt(T.titleLine(t), { style: "caption", color: "muted", maxLines: 1 })
+      ] },
+      ...trailing
+    ] }]
+  };
+}
+function titlePicker(s) {
+  const q = s.pickQuery || "";
+  const pick = (t) => titleRow(t, { key: "pick-" + t.kind + "-" + t.tmdbId, onTap: { event: "attachTitle", arg: attachKey(t) } });
+  const list = [];
+  if (!q) {
+    const recent = s.pickRecent || [];
+    if (recent.length) list.push(Txt(T.watching, { style: "label", color: "muted" }), ...recent.map(pick));
+    else list.push(Txt(T.searchTitlesHint, { style: "caption", color: "muted" }));
+  } else if (s.pickError) list.push(Txt(s.pickError === "noTmdb" ? T.noTmdb : T.searchFailed, { style: "caption", color: "error" }));
+  else if (s.pickResults == null) list.push({ type: "CircularProgressIndicator" });
+  else if (!s.pickResults.length) list.push(Txt(T.noTitles, { style: "caption", color: "muted" }));
+  else list.push(...s.pickResults.map(pick));
+  return {
+    type: "Card",
+    key: "picker",
+    background: "surfaceVariant",
+    padding: 12,
+    gap: 8,
+    children: [
+      { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+        Txt(T.attach, { style: "h5", bold: true, flex: 1 }),
+        IconBtn("close", T.cancel, "cancelAttach", { key: "cancelAttach" })
+      ] },
+      {
+        type: "TextField",
+        key: "titleSearch",
+        kind: "search",
+        maxLength: MAX_QUERY,
+        labelText: T.searchTitles[0],
+        labelTextEn: T.searchTitles[1],
+        onChanged: "searchTitles",
+        autofocus: true
+      },
+      ...list
+    ]
+  };
+}
+function cardRow(c, lock) {
+  const image = draftImage(c.draftId);
+  return {
+    type: "Card",
+    key: "attachedCard",
+    variant: "outlined",
+    padding: 8,
+    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      ...image ? [{ type: "Image", key: "attachedCardImage", width: 56, aspect: "2:3", borderRadius: "small", url: image, alt: c.title, altEn: c.title }] : [],
+      { type: "Column", flex: 1, gap: 4, children: [
+        Raw(c.title, { style: "h5", bold: true, maxLines: 2 }),
+        ...c.description ? [Raw(c.description, { style: "caption", maxLines: 2 })] : [],
+        Txt(T.draftFrom(c.plugin && c.plugin.name || ""), { style: "caption", color: "muted", maxLines: 1 })
+      ] },
+      IconBtn("close", T.removeCard, "clearCard", { key: "clearCard", ...lock })
+    ] }]
+  };
+}
+function composerSheet(s) {
+  const until = muted(s);
+  const lock = until ? { enabled: false } : {};
+  const attach = s.attach || null;
+  const attachCard = s.attachCard || null;
+  const attachment = attachCard ? cardRow(attachCard, lock) : attach ? titleRow(attach, { key: "attached" }, [IconBtn("close", T.removeAttach, "clearAttach", { key: "clearAttach", ...lock })]) : s.picking ? titlePicker(s) : {
+    type: "Button",
+    variant: "secondary",
+    key: "openAttach",
+    icon: "movie",
+    labelText: T.attach[0],
+    labelTextEn: T.attach[1],
+    onPressed: { event: "openAttach", timeoutMs: 2e4 },
+    ...lock
+  };
+  return {
+    type: "BottomSheet",
+    key: "composer",
+    title: T.compose[0],
+    titleEn: T.compose[1],
+    children: [{ type: "Form", key: "composeForm", gap: 12, onSubmit: { event: "publish", timeoutMs: 28e3 }, children: [
+      // A reviewed draft whose direct publish went out with no answer: it may be on the wall already (only while the
+      // composer still holds that draft: «Quitar tarjeta» lets it go).
+      ...s.maybeSent && s.draftId ? [Txt(T.maybeSent, { key: "maybeSent", style: "caption", color: "error" })] : [],
+      // Several lines (Enter is a new line); Kino draws a multi-line field 3 lines high, growing to 8.
+      {
+        type: "TextField",
+        key: "postText",
+        multiline: true,
+        maxLines: 8,
+        maxLength: MAX_TEXT2,
+        required: !attach && !attachCard,
+        labelText: T.prompt[0],
+        labelTextEn: T.prompt[1],
+        hintText: T.postHint[0],
+        hintTextEn: T.postHint[1],
+        ...lock
+      },
+      attachment,
+      until ? muteLine(until) : Txt(T.aiNote, { style: "caption", color: "muted" }),
+      { type: "ElevatedButton", key: "publish", icon: "send", labelText: T.publish[0], labelTextEn: T.publish[1], submit: true, fill: true, ...lock }
+    ] }]
+  };
+}
+function generalSource(s) {
+  return { items: s.feed, next: s.next, newer: s.newer, loadingMore: s.loadingMore, key: "feed", more: "more", canPost: true, header: null };
+}
+function newerBanner(s) {
+  const n = (s.newer || []).length;
+  if (!n) return null;
+  const [es, en] = T.newPosts(n);
+  return { type: "Row", key: "newerRow", mainAxisAlignment: "center", children: [
+    { type: "Button", variant: "secondary", key: "showNewer", icon: "expand_less", labelText: es, labelTextEn: en, onPressed: "showNewer", autofocus: true }
+  ] };
+}
+function moreButton(src) {
+  if (!src.next) return null;
+  return { type: "Row", key: src.key + "MoreRow", mainAxisAlignment: "center", children: [
+    {
+      type: "Button",
+      variant: "secondary",
+      key: src.key + "More",
+      icon: "expand_more",
+      labelText: T.more[0],
+      labelTextEn: T.more[1],
+      onPressed: { event: src.more, timeoutMs: 2e4 },
+      loading: !!src.loadingMore
+    }
+  ] };
+}
+var emptyFeed = () => ({ type: "emptyState", icon: "edit", title: T.emptyFeed[0], titleEn: T.emptyFeed[1], text: T.emptyFeedText[0], textEn: T.emptyFeedText[1] });
+function skeletonFeed() {
+  return Array.from({ length: 3 }, (_, i) => ({ type: "Card", key: "sk" + i, padding: 16, gap: 12, children: [
+    { type: "Row", gap: 12, children: [{ type: "Skeleton", width: 40, height: 40, borderRadius: "full" }, { type: "Skeleton", width: 160, height: 16 }] },
+    { type: "Skeleton", height: 16, fill: true },
+    { type: "Skeleton", height: 16, width: 240 }
+  ] }));
+}
+function feedList(s, ctx, src = generalSource(s)) {
+  const items = [];
+  if (src.header) items.push(src.header);
+  if (!isTv(ctx) && src.canPost) items.push(composerPrompt(s));
+  const newer = src.key === "feed" ? newerBanner(s) : null;
+  if (newer) items.push(newer);
+  if (src.items === void 0) items.push(...skeletonFeed());
+  else if (!src.items.length && !(src.newer || []).length) items.push({ ...src.empty || emptyFeed(), key: "emptyFeed" });
+  const here = src.key === "cfeed" && s.community ? { ...ctx, community: s.community.id } : ctx;
+  for (const it of src.items || []) {
+    const node = feedItem(it, here, s.me, s.selected);
+    if (node) items.push(node);
+  }
+  const more = moreButton(src);
+  if (more) items.push(more);
+  return {
+    type: "ListView",
+    key: src.key,
+    flex: 1,
+    gap: 12,
+    padding: pagePadding,
+    items,
+    empty: src.empty || emptyFeed()
+  };
+}
+function threadItems(s, ctx) {
+  const th = s.thread;
+  const comments = th.items || [];
+  return [
+    postCard(th.post, { ...ctx, device: "phone" }, s.me, { full: true }),
+    Txt(T.comments, { key: "commentsTitle", style: "h5", bold: true, margin: { top: 4 } }),
+    ...comments.length ? comments.map((c) => commentRow(c, s.me)) : [Txt(T.noComments, { key: "noComments", color: "muted" })]
+  ];
+}
+function commentBox(s) {
+  const until = muted(s);
+  if (until) return { type: "Column", key: "commentBox", gap: 4, children: [muteLine(until)] };
+  return { type: "Column", key: "commentBox", gap: 4, children: [
+    {
+      type: "TextField",
+      key: "commentText",
+      multiline: true,
+      maxLines: 6,
+      maxLength: 300,
+      labelText: T.commentHint[0],
+      labelTextEn: T.commentHint[1],
+      onSubmitted: "sendComment"
+    },
+    { type: "Row", mainAxisAlignment: "end", children: [
+      {
+        type: "Button",
+        variant: "secondary",
+        key: "sendComment",
+        icon: "send",
+        labelText: T.send[0],
+        labelTextEn: T.send[1],
+        onPressed: { event: "sendComment", timeoutMs: 2e4 }
+      }
+    ] }
+  ] };
+}
+function threadBody(s, ctx) {
+  if (!s.thread || !s.thread.post) {
+    return [{ type: "emptyState", icon: "list", title: T.pickPost[0], titleEn: T.pickPost[1], text: T.pickPostText[0], textEn: T.pickPostText[1] }];
+  }
+  return [...threadItems(s, ctx), commentBox(s)];
+}
+function draftsBanner(s) {
+  const drafts = s.drafts || [];
+  if (!drafts.length) return null;
+  const row = (d) => ({
+    type: "Column",
+    key: "draft-" + d.id,
+    gap: 4,
+    children: [
+      Txt(d.from ? T.draftFrom(d.from) : T.draftFromUnknown, { style: "label", color: "muted" }),
+      ...d.text ? [Raw(d.text, { maxLines: 3 })] : [],
+      ...d.titled ? [Txt(T.draftWithTitle, { style: "caption", color: "muted" })] : [],
+      ...d.carded ? [Txt(T.draftWithCard(d.from), { style: "caption", color: "muted" })] : [],
+      { type: "Row", gap: 8, children: [
+        Button(T.review, { event: "reviewDraft", arg: d.id, timeoutMs: 2e4 }, { key: "review-" + d.id, icon: "edit" }),
+        TextBtn(T.discard, { event: "discardDraft", arg: d.id }, { key: "discard-" + d.id })
+      ] }
+    ]
+  });
+  return {
+    type: "Card",
+    key: "drafts",
+    variant: "outlined",
+    padding: 12,
+    gap: 12,
+    margin: { x: 12, y: 8 },
+    children: [
+      Txt(T.draftsTitle(drafts.length), { style: "h5", bold: true }),
+      Txt(T.draftsHint, { style: "caption", color: "muted" }),
+      ...drafts.map(row)
+    ]
+  };
+}
+function feedTab(s, ctx, src = generalSource(s)) {
+  const drafts = src.key === "feed" ? draftsBanner(s) : null;
+  if (!isTv(ctx)) {
+    return { type: "Column", flex: 1, children: [
+      ...drafts ? [drafts] : [],
+      feedList(s, ctx, src),
+      composerSheet(s)
+    ] };
+  }
+  return { type: "Row", flex: 1, gap: 24, padding: { x: 32, y: 16 }, children: [
+    { type: "Column", flex: 7, gap: 12, children: [
+      // Writing lives in the app bar, next to the reload button; here only what the person should know before reading.
+      ...src.canPost && muted(s) || src.key === "feed" && newerBanner(s) ? [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+        ...src.canPost && muted(s) ? [muteLine(muted(s))] : [],
+        ...src.key === "feed" && newerBanner(s) ? [newerBanner(s)] : []
+      ] }] : [],
+      ...drafts ? [{ ...drafts, margin: 0 }] : [],
+      { ...feedList(s, ctx, src), padding: 0 }
+    ] },
+    {
+      type: "Card",
+      key: "pane",
+      flex: 5,
+      background: "surfaceVariant",
+      padding: 16,
+      canRequestFocus: !(s.thread && s.thread.post),
+      children: [{ type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", gap: 12, children: threadBody(s, ctx) }] }]
+    },
+    composerSheet(s)
+  ] };
+}
+var isCreator = (plugins) => (plugins || []).some((pl) => !pl.hidden);
+var editProfileButton = () => Button(T.editProfile, { ui: [{ open: "editProfile" }] }, { key: "editProfileBtn", icon: "edit", variant: "secondary", type: "Button" });
+function profileHeader(p, own, ctx, plugins) {
+  const u = p.user;
+  const stat = (n, [es, en]) => ({ type: "Column", flex: 1, crossAxisAlignment: "center", children: [Raw(String(n), { style: "h4", bold: true }), Txt([es, en], { style: "caption", color: "muted" })] });
+  return {
+    type: "Card",
+    key: "head-" + u.id,
+    padding: 24,
+    gap: 16,
+    elevation: 1,
+    children: [
+      { type: "Row", gap: 16, crossAxisAlignment: "center", children: [
+        Avatar(u, isTv(ctx) ? 48 : 36),
+        { type: "Column", flex: 1, gap: 4, children: [
+          { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+            Raw(u.name, { style: "h3", maxLines: 1 }),
+            ...isCreator(plugins) ? [Tag(T.creatorTag, "bolt", { key: "creatorTag" })] : []
+          ] },
+          ...u.handle ? [Raw("@" + u.handle, { color: "muted" })] : []
+        ] },
+        // On the TV the free room to the right of the name holds the button; a phone keeps it under the numbers.
+        ...own && isTv(ctx) ? [editProfileButton()] : []
+      ] },
+      ...u.bio ? [Raw(u.bio)] : [],
+      { type: "Row", gap: 8, children: [
+        stat(p.postCount || 0, T.postsCount),
+        stat(p.followers || 0, T.followers),
+        stat(p.followingCount || 0, T.followingCount)
+      ] },
+      ...own ? isTv(ctx) ? [] : [{ type: "Row", gap: 8, children: [editProfileButton()] }] : [{ type: "Row", children: [p.following ? { type: "Button", variant: "secondary", key: "unfollow-" + u.id, icon: "check", labelText: T.following[0], labelTextEn: T.following[1], selected: true, onPressed: { event: "unfollow", arg: String(u.id) } } : Button(T.follow, { event: "follow", arg: String(u.id) }, { key: "follow-" + u.id, icon: "add" })] }]
+    ]
+  };
+}
+function watchedGrid(items, ctx, { own = false } = {}) {
+  if (!items.length) return [Txt(own ? T.noWatched : T.noPosts, { color: "muted" })];
+  return [{
+    type: "GridView",
+    key: own ? "myWatched" : "theirWatched",
+    columns: { compact: 3, medium: 4, expanded: 6 },
+    gap: 8,
+    children: items.slice(0, 18).map((a) => ({
+      type: "Card",
+      key: "w" + a.id,
+      flush: true,
+      onTap: { go: { titleByIds: { tmdb: a.tmdbId, kind: a.kind, title: a.title.slice(0, 120) } } },
+      children: [
+        {
+          type: "Image",
+          aspect: "2:3",
+          alt: a.title,
+          altEn: a.title,
+          ...a.poster ? { url: a.poster } : {},
+          fallback: { type: "Column", padding: 8, children: [{ type: "Icon", name: a.kind === "movie" ? "movie" : "tv" }, Raw(a.title, { style: "caption", maxLines: 3 })] }
+        }
+      ]
+    }))
+  }];
+}
+function pluginRow(pl, { own = false } = {}) {
+  const addr = pl.repo;
+  return {
+    type: "Card",
+    key: "plg" + addr,
+    padding: 12,
+    onTap: { go: { installPlugin: { repo: addr } } },
+    children: [
+      { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+        { type: "Column", flex: 1, gap: 2, children: [
+          Raw(pl.name, { style: "h5", bold: true, maxLines: 1 }),
+          ...pl.description ? [Raw(pl.description, { style: "caption", color: "muted", maxLines: 2 })] : [],
+          Txt([`★ ${pl.stars}`, `★ ${pl.stars}`], { style: "caption", color: "muted" })
+        ] },
+        ...own ? [TextBtn(
+          pl.hidden ? T.unhidePlugin : T.hidePlugin,
+          { event: pl.hidden ? "unhidePlugin" : "hidePlugin", arg: addr },
+          { key: "hideBtn" + addr }
+        )] : []
+      ] }
+    ]
+  };
+}
+function creatorPluginsSection(plugins, { own = false } = {}) {
+  const list = plugins || [];
+  if (!list.length) return [];
+  const visible = list.filter((pl) => !pl.hidden);
+  const hidden = own ? list.filter((pl) => pl.hidden) : [];
+  return [
+    ...visible.length ? [Txt(T.creatorPlugins, { style: "h4" }), ...visible.map((pl) => pluginRow(pl, { own }))] : [],
+    ...hidden.length ? [Txt(T.hiddenPlugins, { style: "caption", color: "muted" }), ...hidden.map((pl) => pluginRow(pl, { own }))] : []
+  ];
+}
+var MONTHS = [
+  ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
+  ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+];
+function watchedLine2(a, lang) {
+  const parts = [];
+  if (Number.isInteger(a.season) && Number.isInteger(a.episode)) parts.push(lang ? `S${a.season} · E${a.episode}` : `T${a.season} · E${a.episode}`);
+  const d = new Date(Number(a.watchedAt) || 0);
+  if (a.watchedAt) parts.push(lang ? `${MONTHS[1][d.getMonth()]} ${d.getDate()}` : `${d.getDate()} ${MONTHS[0][d.getMonth()]}`);
+  return parts.join(" · ");
+}
+function coinsCard(coins) {
+  if (!coins) return null;
+  const cap = coins.capToday || 0;
+  return { type: "Card", key: "coinsCard", padding: 16, gap: 8, children: [
+    { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      { type: "Icon", name: "star", color: "primary" },
+      { type: "Column", flex: 1, gap: 0, children: [
+        Txt(T.coinTitle, { style: "caption", color: "muted" }),
+        Txt(T.coinBalance(coins.balance), { style: "h4", bold: true })
+      ] }
+    ] },
+    ...cap ? [{
+      type: "LinearProgressIndicator",
+      value: Math.min(1, (coins.earnedToday || 0) / cap),
+      labelText: T.coinToday(coins.earnedToday || 0, cap)[0],
+      labelTextEn: T.coinToday(coins.earnedToday || 0, cap)[1]
+    }] : [],
+    Txt(T.coinHint, { style: "caption", color: "muted" })
+  ] };
+}
+function profileTab(s, ctx) {
+  const p = s.profile;
+  if (!p) return { type: "Column", padding: pagePadding, gap: 12, children: skeletonFeed().slice(0, 1) };
+  const mine = s.myActivity || [];
+  return { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
+    profileHeader(p, true, ctx, s.myPlugins),
+    ...ctx.coins && s.coins ? [coinsCard(s.coins)] : [],
+    { type: "Card", key: "shareCard", padding: 16, gap: 4, children: [
+      { type: "Switch", key: "share", value: !!s.me.shareActivity, labelText: T.share[0], labelTextEn: T.share[1], onChanged: "toggleShare" },
+      Txt(T.shareHint, { style: "caption", color: "muted" })
+    ] },
+    Txt(T.watched, { style: "h4" }),
+    Txt(T.watchedHint, { style: "caption", color: "muted" }),
+    ...mine.length ? mine.slice(0, 30).map((a) => ({
+      type: "Row",
+      key: "ma" + a.id,
+      gap: 12,
+      crossAxisAlignment: "center",
+      children: [
+        {
+          type: "Image",
+          width: 40,
+          aspect: "2:3",
+          borderRadius: "small",
+          ...a.poster ? { url: a.poster } : {},
+          alt: a.title,
+          altEn: a.title,
+          fallback: { type: "Stack", color: "surfaceVariant", children: [{ type: "Icon", name: a.kind === "movie" ? "movie" : "tv", margin: 8 }] }
+        },
+        // A labelled Switch fills its row, so the title is its label (flex 1) rather than a column beside it.
+        {
+          type: "Switch",
+          key: "act" + a.id,
+          flex: 1,
+          value: !a.hidden,
+          labelText: a.title || "—",
+          labelTextEn: a.title || "—",
+          hint: watchedLine2(a, 0),
+          hintEn: watchedLine2(a, 1),
+          onChanged: { event: "toggleActivity", arg: String(a.id) }
+        }
+      ]
+    })) : [Txt(T.noWatched, { color: "muted" })],
+    Txt(T.posts, { style: "h4" }),
+    ...(p.posts || []).length ? p.posts.map((post2) => postCard(post2, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })],
+    ...creatorPluginsSection(s.myPlugins, { own: true }),
+    // The plugins the person allowed to post straight to their wall: Kino's own form for the synced list, to remove them.
+    Txt(T.directTitle, { style: "h4" }),
+    { type: "settings", keys: ["directPublishers"], key: "directPublishers" },
+    TextBtn(
+      ["Cerrar sesión en todos tus aparatos", "Log out on all your devices"],
+      "logoutAll",
+      { key: "logoutAll", confirm: "¿Cerrar sesión en todos tus aparatos?", confirmEn: "Log out on all your devices?" }
+    ),
+    editProfileSheet(s)
+  ] }] };
+}
+function editProfileSheet(s) {
+  return { type: "BottomSheet", key: "editProfile", title: T.editProfile[0], titleEn: T.editProfile[1], children: [
+    { type: "Form", key: "profileForm", gap: 12, onSubmit: "saveProfile", children: [
+      { type: "TextField", key: "nameText", value: s.me.name, required: true, maxLength: 40, labelText: T.name[0], labelTextEn: T.name[1] },
+      {
+        type: "TextField",
+        key: "handleText",
+        value: s.me.handle || "",
+        required: true,
+        minLength: 3,
+        maxLength: 20,
+        pattern: "^@?[a-zA-Z0-9_.]{3,20}$",
+        errorText: "3 a 20 letras, números, _ o .",
+        errorTextEn: "3 to 20 letters, digits, _ or .",
+        labelText: "@usuario",
+        labelTextEn: "@username"
+      },
+      {
+        type: "TextField",
+        key: "bioText",
+        value: s.me.bio || "",
+        multiline: true,
+        maxLines: 3,
+        maxLength: 160,
+        labelText: T.bio[0],
+        labelTextEn: T.bio[1],
+        hintText: T.bioHint[0],
+        hintTextEn: T.bioHint[1]
+      },
+      { type: "ElevatedButton", key: "saveProfile", labelText: T.save[0], labelTextEn: T.save[1], submit: true, fill: true }
+    ] }
+  ] };
+}
+function personRow(p) {
+  return { type: "Row", key: "p" + p.id, gap: 8, crossAxisAlignment: "center", children: [
+    {
+      type: "ListTile",
+      flex: 1,
+      title: p.name,
+      titleEn: p.name,
+      subtitle: p.handle ? "@" + p.handle + (p.bio ? " · " + p.bio : "") : p.bio || void 0,
+      leading: Avatar(p),
+      onTap: { event: "openUser", arg: String(p.id) }
+    },
+    p.following ? { type: "Button", variant: "secondary", key: "pf" + p.id, labelText: T.following[0], labelTextEn: T.following[1], selected: true, onPressed: { event: "unfollow", arg: String(p.id) } } : Button(T.follow, { event: "follow", arg: String(p.id) }, { key: "pf" + p.id })
+  ] };
+}
+function peopleTab(s, ctx) {
+  const list = s.results !== void 0 ? s.results : s.people;
+  return { type: "Column", flex: 1, gap: 12, padding: pagePadding, children: [
+    {
+      type: "TextField",
+      key: "searchText",
+      kind: "search",
+      maxLength: 40,
+      labelText: "Buscar por nombre o @usuario",
+      labelTextEn: "Search by name or @username",
+      onSubmitted: "search",
+      trailingIcon: "search",
+      trailingLabel: "Buscar",
+      trailingLabelEn: "Search",
+      onTrailingTap: "search"
+    },
+    {
+      type: "ListView",
+      key: "people",
+      flex: 1,
+      gap: 4,
+      items: (list || []).map(personRow),
+      empty: list === void 0 ? { type: "CircularProgressIndicator" } : { type: "emptyState", icon: "person", title: T.noPeople[0], titleEn: T.noPeople[1], text: T.noPeopleText[0], textEn: T.noPeopleText[1] }
+    }
+  ] };
+}
+function mainView(s, ctx) {
+  const tab = ["feed", "communities", "people"].includes(s.tab) ? s.tab : "feed";
+  const unread = s.unread || 0;
+  const tabs = { type: "TabBar", key: "tabs", value: tab, onChanged: "tab", tabs: [
+    { value: "feed", label: T.feed[0], labelEn: T.feed[1] },
+    { value: "communities", label: T.communities[0], labelEn: T.communities[1] },
+    { value: "people", label: T.people[0], labelEn: T.people[1] }
+  ] };
+  const me = IconBtn("person", T.profile, "openProfile", {
+    key: "openProfile",
+    ...unread ? { badge: { text: String(Math.min(unread, 99)) } } : {}
+  });
+  const writeInBar = isTv(ctx) && tab === "feed" && generalSource(s).canPost;
+  const body = tab === "people" ? peopleTab(s, ctx) : tab === "communities" ? communitiesTab(s, ctx) : feedTab(s, ctx);
+  return {
+    type: "Scaffold",
+    every: { ms: 6e4, event: "tick" },
+    // One row: the tabs where the greeting used to be, then (on the TV, in the feed) the red write button, reload and your
+    // avatar. The bar's own buttons are plain icons, so the red one rides in the title next to them. A phone writes from the
+    // prompt at the top of the feed.
+    appBar: { type: "AppBar", ...barPadding(ctx), title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      { ...tabs, flex: 1 },
+      Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...muted(s) ? { enabledAt: muted(s) } : {} })
+    ] } : tabs, actions: [
+      IconBtn("refresh", T.refresh, { event: "refresh", timeoutMs: 2e4 }, { key: "refresh", loading: !!s.refreshing }),
+      me
+    ] },
+    body
+  };
+}
+function meView(s, ctx) {
+  const heading = isTv(ctx) ? { title: Txt(T.profile, { style: "h5", bold: true }) } : { title: T.profile[0], titleEn: T.profile[1] };
+  return { type: "Scaffold", appBar: {
+    type: "AppBar",
+    ...barPadding(ctx),
+    ...heading,
+    leading: IconBtn("arrow_back", T.back, "back")
+  }, body: profileTab(s, ctx) };
+}
+function postView(s, ctx) {
+  const appBar = { type: "AppBar", ...barPadding(ctx), title: T.post[0], titleEn: T.post[1], leading: IconBtn("arrow_back", T.back, "back") };
+  if (!s.thread || !s.thread.post) return { type: "Scaffold", appBar, body: { type: "Column", padding: pagePadding, children: threadBody(s, ctx) } };
+  return { type: "Scaffold", appBar, body: { type: "Column", flex: 1, children: [
+    { type: "ListView", key: "threadList", flex: 1, gap: 12, padding: pagePadding, stickToBottom: true, newItemsHint: true, items: threadItems(s, ctx) },
+    { type: "Column", padding: { x: 12, y: 8 }, children: [commentBox(s)] }
+  ] } };
+}
+function userView(s, ctx) {
+  const p = s.user;
+  const body = !p ? { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] } : { type: "SingleChildScrollView", flex: 1, children: [{ type: "Column", padding: pagePadding, gap: 16, maxWidth: 640, alignSelf: "center", fill: true, children: [
+    profileHeader(p, s.me && p.user.id === s.me.id, ctx, p.plugins),
+    Txt(T.theirWatched, { style: "h4" }),
+    ...watchedGrid(p.activity || [], ctx),
+    Txt(T.posts, { style: "h4" }),
+    ...(p.posts || []).length ? p.posts.map((post2) => postCard(post2, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })],
+    ...creatorPluginsSection(p.plugins, { own: false })
+  ] }] };
+  return { type: "Scaffold", appBar: {
+    type: "AppBar",
+    ...barPadding(ctx),
+    title: p ? p.user.name : T.profile[0],
+    titleEn: p ? p.user.name : T.profile[1],
+    leading: IconBtn("arrow_back", T.back, "back")
+  }, body };
+}
+function welcomeView(s, ctx) {
+  const ok3 = s.handleCheck;
+  return { type: "SingleChildScrollView", children: [{ type: "Column", padding: { x: 24, y: 32 }, gap: 16, maxWidth: 480, alignSelf: "center", fill: true, children: [
+    { type: "Column", fill: true, crossAxisAlignment: "center", children: [Avatar(s.me || { name: "?" }, 40)] },
+    Txt(["Bienvenido a Kino Social", "Welcome to Kino Social"], { style: "h2", textAlign: "center" }),
+    Txt(["Elige tu @usuario: así te encuentran tus amigos. Es único y lo puedes cambiar después.", "Pick your @username: it's how friends find you. It's unique and you can change it later."], { textAlign: "center", color: "muted" }),
+    { type: "Form", key: "welcomeForm", gap: 12, onSubmit: "pickHandle", children: [
+      {
+        type: "TextField",
+        key: "handleText",
+        required: true,
+        minLength: 3,
+        maxLength: 20,
+        pattern: "^@?[a-zA-Z0-9_.]{3,20}$",
+        errorText: "3 a 20 letras, números, _ o .",
+        errorTextEn: "3 to 20 letters, digits, _ or .",
+        labelText: "@usuario",
+        labelTextEn: "@username",
+        onChanged: "checkHandle"
+      },
+      ...ok3 ? [{ type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+        { type: "Icon", name: ok3.available ? "check" : "close", size: "sm", color: ok3.available ? "secondary" : "error" },
+        Txt(
+          ok3.available ? [`@${ok3.handle} está libre`, `@${ok3.handle} is free`] : [`@${ok3.handle} no está disponible`, `@${ok3.handle} is not available`],
+          { style: "caption", color: ok3.available ? "muted" : "error" }
+        )
+      ] }] : [],
+      { type: "TextField", key: "nameText", required: true, maxLength: 40, labelText: T.name[0], labelTextEn: T.name[1] },
+      { type: "ElevatedButton", key: "pickHandle", labelText: ["Empezar", "Start"][0], labelTextEn: "Start", submit: true, fill: true }
+    ] }
+  ] }] };
+}
+function problemView(code) {
+  if (code === "device_taken" || code === "too_many_devices") {
+    const t = code === "device_taken" ? T.deviceTaken : T.tooManyDevices;
+    return {
+      type: "errorState",
+      icon: "lock",
+      title: t[0],
+      titleEn: t[1],
+      text: T.unbindText[0],
+      textEn: T.unbindText[1],
+      action: { label: T.retry[0], labelEn: T.retry[1], event: "open" }
+    };
+  }
+  if (code === "no_identity" || code === "unofficial") {
+    return {
+      type: "errorState",
+      icon: "lock",
+      title: T.noIdentity[0],
+      titleEn: T.noIdentity[1],
+      text: T.noIdentityText[0],
+      textEn: T.noIdentityText[1],
+      action: { label: T.retry[0], labelEn: T.retry[1], event: "open" }
+    };
+  }
+  return {
+    type: "errorState",
+    title: T.offline[0],
+    titleEn: T.offline[1],
+    text: T.offlineText[0],
+    textEn: T.offlineText[1],
+    action: { label: T.retry[0], labelEn: T.retry[1], event: "open" }
+  };
+}
+
+// src/ui/communities.js
+var membersLine = (c) => T.members(c.members);
+var MARK_COLORS = ["secondary", "primaryContainer", "primary"];
+function Mark(c, radius = 24) {
+  const letter = (String(c.name || "?").trim()[0] || "?").toUpperCase();
+  return {
+    type: "Column",
+    width: radius * 2,
+    height: radius * 2,
+    color: MARK_COLORS[Math.abs(Number(c.id) || 0) % MARK_COLORS.length],
+    borderRadius: "medium",
+    mainAxisAlignment: "center",
+    crossAxisAlignment: "center",
+    children: [Raw(letter, { style: radius > 28 ? "h3" : "h4", bold: true })]
+  };
+}
+function joinButton(c, key, strong = false) {
+  if (c.owner) return null;
+  if (c.private && !c.joined) {
+    return c.requested ? {
+      type: "Button",
+      variant: "secondary",
+      key,
+      icon: "schedule",
+      labelText: T.requested[0],
+      labelTextEn: T.requested[1],
+      selected: true,
+      onPressed: { event: "leaveCommunity", arg: String(c.id) }
+    } : strong ? Button(T.askToJoin, { event: "joinCommunity", arg: String(c.id) }, { key, icon: "lock" }) : { type: "Button", variant: "secondary", key, icon: "lock", labelText: T.askToJoin[0], labelTextEn: T.askToJoin[1], onPressed: { event: "joinCommunity", arg: String(c.id) } };
+  }
+  return c.joined ? {
+    type: "Button",
+    variant: "secondary",
+    key,
+    icon: "check",
+    labelText: T.joined[0],
+    labelTextEn: T.joined[1],
+    selected: true,
+    onPressed: { event: "leaveCommunity", arg: String(c.id) }
+  } : strong ? Button(T.join, { event: "joinCommunity", arg: String(c.id) }, { key, icon: "add" }) : { type: "Button", variant: "secondary", key, icon: "add", labelText: T.join[0], labelTextEn: T.join[1], onPressed: { event: "joinCommunity", arg: String(c.id) } };
+}
+function communityRow(c) {
+  const join = joinButton(c, "cj" + c.id);
+  return { type: "Card", key: "c" + c.id, padding: 12, onTap: { event: "openCommunity", arg: String(c.id) }, children: [
+    { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      Mark(c),
+      { type: "Column", flex: 1, gap: 0, children: [
+        Raw(c.name, { style: "h5", bold: true, maxLines: 1 }),
+        Txt([
+          `@${c.slug} · ${membersLine(c)[0]}${c.private ? " · " + T.privateTag[0] : ""}`,
+          `@${c.slug} · ${membersLine(c)[1]}${c.private ? " · " + T.privateTag[1] : ""}`
+        ], { style: "caption", color: "muted", maxLines: 1 }),
+        ...c.description ? [Raw(c.description, { style: "caption", maxLines: 2 })] : []
+      ] },
+      ...join ? [join] : []
+    ] }
+  ] };
+}
+function createSheet() {
+  return { type: "BottomSheet", key: "createCommunity", title: T.newCommunity[0], titleEn: T.newCommunity[1], children: [
+    { type: "Form", key: "communityForm", gap: 12, onSubmit: "createCommunity", children: [
+      { type: "TextField", key: "communityName", required: true, minLength: 3, maxLength: 40, labelText: T.communityName[0], labelTextEn: T.communityName[1] },
+      {
+        type: "TextField",
+        key: "communitySlug",
+        required: true,
+        minLength: 3,
+        maxLength: 20,
+        pattern: "^@?[a-zA-Z0-9_.]{3,20}$",
+        errorText: "3 a 20 letras, números, _ o .",
+        errorTextEn: "3 to 20 letters, digits, _ or .",
+        labelText: T.communitySlug[0],
+        labelTextEn: T.communitySlug[1]
+      },
+      {
+        type: "TextField",
+        key: "communityDescription",
+        multiline: true,
+        maxLines: 3,
+        maxLength: 200,
+        labelText: T.communityDescription[0],
+        labelTextEn: T.communityDescription[1]
+      },
+      {
+        type: "Switch",
+        key: "communityPrivate",
+        value: false,
+        labelText: T.privateCommunity[0],
+        labelTextEn: T.privateCommunity[1],
+        hint: T.privateHint[0],
+        hintEn: T.privateHint[1]
+      },
+      { type: "ElevatedButton", key: "createCommunityBtn", icon: "add", labelText: T.create[0], labelTextEn: T.create[1], submit: true, fill: true }
+    ] }
+  ] };
+}
+function communitiesTab(s, ctx) {
+  const lists = s.communities;
+  const results = s.communityResults;
+  const items = [
+    { type: "Row", key: "cTop", gap: 12, crossAxisAlignment: "center", children: [
+      {
+        type: "TextField",
+        key: "communitySearch",
+        kind: "search",
+        flex: 1,
+        maxLength: 40,
+        labelText: T.searchCommunities[0],
+        labelTextEn: T.searchCommunities[1],
+        onSubmitted: "searchCommunities",
+        trailingIcon: "search",
+        trailingLabel: "Buscar",
+        trailingLabelEn: "Search",
+        onTrailingTap: "searchCommunities"
+      },
+      Button(T.create, { ui: [{ open: "createCommunity" }] }, { key: "newCommunity", icon: "add" })
+    ] }
+  ];
+  if (results !== void 0) {
+    items.push(Txt(T.results, { key: "cResultsTitle", style: "h5", bold: true }), ...results.map(communityRow));
+    if (!results.length) items.push(Txt(T.noCommunitiesFound, { key: "cNone", color: "muted" }));
+  } else if (lists === void 0) {
+    items.push({ type: "CircularProgressIndicator", key: "cLoading" });
+  } else {
+    if (lists.mine.length) items.push(Txt(T.yourCommunities, { key: "cMineTitle", style: "h5", bold: true }), ...lists.mine.map(communityRow));
+    items.push(Txt(T.discover, { key: "cDiscoverTitle", style: "h5", bold: true }), ...lists.discover.map(communityRow));
+    if (!lists.discover.length && !lists.mine.length) {
+      items.push({
+        type: "emptyState",
+        key: "cEmpty",
+        icon: "add",
+        title: T.noCommunities[0],
+        titleEn: T.noCommunities[1],
+        text: T.noCommunitiesText[0],
+        textEn: T.noCommunitiesText[1]
+      });
+    }
+  }
+  return { type: "Column", flex: 1, children: [
+    { type: "ListView", key: "communityList", flex: 1, gap: 8, padding: pagePadding, items },
+    createSheet()
+  ] };
+}
+function communitySource(s, ctx) {
+  const c = s.community;
+  const join = joinButton(c, "cHeadJoin", true);
+  const header = { type: "Card", key: "cHead", padding: 16, gap: 12, elevation: 1, children: [
+    { type: "Row", gap: 16, crossAxisAlignment: "center", children: [
+      Mark(c, isTv(ctx) ? 40 : 32),
+      { type: "Column", flex: 1, gap: 4, children: [
+        Raw(c.name, { style: "h3", maxLines: 2 }),
+        Txt([
+          `@${c.slug} · ${membersLine(c)[0]} · ${count(c.posts)} ${c.posts === 1 ? "publicación" : "publicaciones"}`,
+          `@${c.slug} · ${membersLine(c)[1]} · ${count(c.posts)} ${c.posts === 1 ? "post" : "posts"}`
+        ], { style: "caption", color: "muted" })
+      ] }
+    ] },
+    ...c.description ? [Raw(c.description)] : [],
+    ...join ? [{ type: "Row", children: [join] }] : c.owner ? [Txt(T.youOwn, { style: "caption", color: "muted" })] : [],
+    // The owner of a private one: who is waiting to get in.
+    ...c.owner && c.private && c.pending ? [{ type: "Row", children: [
+      Button(T.requests(c.pending), { event: "openRequests", timeoutMs: 2e4 }, { key: "cRequests", icon: "person_add" })
+    ] }] : []
+  ] };
+  const locked = c.private && !c.joined;
+  return {
+    items: s.cfeed,
+    next: s.cnext,
+    newer: [],
+    loadingMore: s.cloadingMore,
+    key: "cfeed",
+    more: "moreCommunity",
+    canPost: !!c.joined,
+    header,
+    empty: locked ? { type: "emptyState", icon: "lock", title: T.privateLocked[0], titleEn: T.privateLocked[1], text: T.privateLockedText[0], textEn: T.privateLockedText[1] } : {
+      type: "emptyState",
+      icon: "edit",
+      title: T.emptyCommunity[0],
+      titleEn: T.emptyCommunity[1],
+      text: c.joined ? T.emptyCommunityMember[0] : T.emptyCommunityVisitor[0],
+      textEn: c.joined ? T.emptyCommunityMember[1] : T.emptyCommunityVisitor[1]
+    }
+  };
+}
+function requestsSheet(s) {
+  const rows = (s.crequests || []).map((p) => ({ type: "Row", key: "rq" + p.id, gap: 8, crossAxisAlignment: "center", children: [
+    {
+      type: "ListTile",
+      flex: 1,
+      title: p.name,
+      titleEn: p.name,
+      subtitle: p.handle ? "@" + p.handle : void 0,
+      leading: Avatar(p),
+      onTap: { event: "openUser", arg: String(p.id) }
+    },
+    { type: "Button", variant: "secondary", key: "rqNo" + p.id, labelText: T.reject[0], labelTextEn: T.reject[1], onPressed: { event: "rejectRequest", arg: String(p.id) } },
+    Button(T.approve, { event: "approveRequest", arg: String(p.id) }, { key: "rqOk" + p.id })
+  ] }));
+  return {
+    type: "BottomSheet",
+    key: "communityRequests",
+    title: T.joinRequests[0],
+    titleEn: T.joinRequests[1],
+    children: [{ type: "Column", gap: 8, children: rows }]
+  };
+}
+function communityView(s, ctx) {
+  const c = s.community;
+  return {
+    type: "Scaffold",
+    appBar: { type: "AppBar", ...barPadding(ctx), title: c ? c.name : T.communities[0], titleEn: c ? c.name : T.communities[1], leading: IconBtn("arrow_back", T.back, "back") },
+    body: c ? { type: "Column", flex: 1, children: [feedTab(s, ctx, communitySource(s, ctx)), requestsSheet(s)] } : { type: "Column", padding: pagePadding, children: [{ type: "CircularProgressIndicator" }] }
+  };
+}
+
+// src/activity.js
+var LAST_KEY = "activityLastSync";
+var SENT_KEY = "activitySent";
+var POSTERS_KEY = "posters";
+var EVERY_MS = 10 * 60 * 1e3;
+var DAY_MS = 864e5;
+var MAX_SENT = 500;
+var MAX_POSTER_LOOKUPS = 8;
+var FINISHED = 0.9;
+var readJson = (key, fallback) => {
+  try {
+    const v = JSON.parse(kino.storage.get(key) || "null");
+    return v && typeof v === "object" ? v : fallback;
+  } catch (_) {
+    return fallback;
+  }
+};
+async function tmdbInfo(kind, id, cache) {
+  const key = kind + ":" + id;
+  if (cache[key]) return cache[key];
+  if (typeof kino.tmdb !== "function") return null;
+  let d;
+  try {
+    d = await kino.tmdb((kind === "movie" ? "/movie/" : "/tv/") + id, { language: "es" });
+  } catch (_) {
+    return null;
+  }
+  const info = { poster: d && d.poster_path ? "https://image.tmdb.org/t/p/w342" + d.poster_path : null, adult: !!(d && d.adult) };
+  cache[key] = info;
+  return info;
+}
+async function syncActivity(now = Date.now()) {
+  if (typeof kino.library !== "object") return 0;
+  const last = Number(kino.storage.get(LAST_KEY) || 0);
+  if (now - last < EVERY_MS) return 0;
+  let watched;
+  try {
+    watched = await kino.library.watched({ limit: 50, sinceMs: last ? last - DAY_MS : void 0 });
+  } catch (_) {
+    return 0;
+  }
+  const sent = readJson(SENT_KEY, {});
+  const posters = readJson(POSTERS_KEY, {});
+  const items = [];
+  let lookups = 0;
+  for (const w of watched) {
+    const tmdb = Number(w.ids && w.ids.tmdb);
+    if (!Number.isInteger(tmdb) || tmdb <= 0 || w.kind !== "movie" && w.kind !== "series") continue;
+    if (!(Number(w.progress) >= FINISHED)) continue;
+    const sig = w.kind === "series" ? `${w.season ?? ""}x${w.episode ?? ""}` : "m";
+    const key = w.kind + ":" + tmdb;
+    if (sent[key] === sig) continue;
+    if (!posters[key] && lookups++ >= MAX_POSTER_LOOKUPS) continue;
+    const info = await tmdbInfo(w.kind, tmdb, posters);
+    if (!info) continue;
+    if (info.adult) {
+      sent[key] = sig;
+      continue;
+    }
+    const item = { kind: w.kind, tmdbId: tmdb, title: w.title, watchedAtMs: w.watchedAtMs || now, poster: info.poster || void 0 };
+    if (w.kind === "series" && Number.isInteger(w.season) && Number.isInteger(w.episode)) {
+      item.season = w.season;
+      item.episode = w.episode;
+    }
+    items.push({ item, key, sig });
+  }
+  kino.storage.set(POSTERS_KEY, JSON.stringify(trim(posters, 200)), { ttlMs: 30 * DAY_MS });
+  if (items.length) {
+    try {
+      await call("/activity", { method: "POST", json: { items: items.map((i) => i.item) } });
+    } catch (_) {
+      return 0;
+    }
+    for (const i of items) sent[i.key] = i.sig;
+  }
+  kino.storage.set(SENT_KEY, JSON.stringify(trim(sent, MAX_SENT)));
+  kino.storage.set(LAST_KEY, String(now));
+  return items.length;
+}
+function trim(map, max) {
+  const keys = Object.keys(map);
+  return keys.length <= max ? map : Object.fromEntries(keys.slice(-max).map((k) => [k, map[k]]));
 }
 
 // src/linkpreview.js
@@ -2703,15 +3257,12 @@ async function titleHint(text) {
   }
 }
 
-// src/lines.js
-var BLANK_RUN = /\n[ \t]*(?:\n[ \t]*)+\n/g;
-function tidyLines(text) {
-  return String(text ?? "").replace(/\r\n?/g, "\n").replace(BLANK_RUN, "\n\n").trim();
-}
-
 // src/events.js
-var draftsState = () => readDrafts().map((d) => ({ id: d.id, from: d.from || "", text: (d.text || d.link || "").slice(0, 140), titled: !!d.title }));
+var draftsState = () => readDrafts().map((d) => ({ id: d.id, from: d.from || "", text: draftExcerpt(d).slice(0, 140), titled: !!d.title, carded: !!d.card }));
 var MAX_FEED = 80;
+var MAX_CFEED = 30;
+var MAX_NEWER = 10;
+var FEED_PAGE = 20;
 var toast = ([es, en]) => ({ toast: es, toastEn: en });
 function failure(e) {
   const code = e instanceof ApiError ? e.code : "offline";
@@ -2721,6 +3272,7 @@ function failure(e) {
   if (code === "slug_taken") return toast(T.slugTaken);
   if (["bad_name", "bad_slug", "bad_description"].includes(code)) return toast(T.badCommunity);
   if (code === "not_member") return toast(T.notMember);
+  if (code === "bad_card") return toast(T.badCard);
   if (code === "muted") return { state: { mutedUntil: mutedUntil(e.mutedUntil) }, dialog: muteDialog(e.mutedUntil) };
   if (["no_identity", "unofficial", "device_taken", "too_many_devices"].includes(code)) return { state: { problem: code } };
   return toast(T.offline);
@@ -2838,6 +3390,97 @@ async function giveCoin(state, postId) {
     return toast(coinRefusal(e));
   }
 }
+async function cardTap(state, postId) {
+  const post2 = findPost(state, postId);
+  const c = post2 && slimCard(post2.card);
+  if (!c) return null;
+  if (!c.g && !c.m) return toast(T.cannotOpen(c.n));
+  if (!goPluginReady()) return toast(T.updateKinoToOpen(c.n));
+  let fresh;
+  try {
+    fresh = await callFresh("/posts/" + encodeURIComponent(String(postId)), { fullCards: true });
+  } catch (e) {
+    return e instanceof ApiError && e.status === 404 ? toast(T.cardPostGone) : failure(e);
+  }
+  const go = fullCardGo(fresh.card);
+  return go ? { go: { plugin: go } } : toast(T.cannotOpen(c.n));
+}
+var PAGE_VIEWS = ["me", "post", "user", "community"];
+var onMain = (route) => !!route && !PAGE_VIEWS.includes(route.name);
+var PAGE_KEYS = ["cfeed", "cnext", "community", "crequests", "user", "profile", "myActivity", "myPlugins"];
+function leftPages(s, route) {
+  if (!onMain(route)) return null;
+  const out = Object.fromEntries(PAGE_KEYS.filter((k) => s[k] !== void 0 && s[k] !== null).map((k) => [k, null]));
+  if (PAGE_VIEWS.includes(s.view)) out.view = "main";
+  return Object.keys(out).length ? out : null;
+}
+var STATE_LINE = 44 * 1024;
+var stateBytes = (s) => utf8Length(JSON.stringify(s));
+var mergeState = (s, patch) => {
+  const next = { ...s };
+  for (const [k, v] of Object.entries(patch)) if (v === null) delete next[k];
+  else next[k] = v;
+  return next;
+};
+function feedTo(feed, n) {
+  const kept = feed.slice(0, n);
+  const times = kept.map((i) => i.createdAt).filter(Number.isFinite);
+  return { feed: kept, ...times.length ? { next: Math.min(...times) } : {} };
+}
+function fitState(s, out, route) {
+  if (!out || !out.state) return out;
+  const patch = { ...out.state };
+  let merged = mergeState(s, patch);
+  if (stateBytes(merged) <= STATE_LINE) return out;
+  const top = route && route.name;
+  const covered = !onMain(route);
+  const steps = [
+    () => (merged.newer || []).length && { newer: [] },
+    () => covered && (merged.feed || []).length > 40 && feedTo(merged.feed, 40),
+    () => covered && (merged.feed || []).length > FEED_PAGE && feedTo(merged.feed, FEED_PAGE),
+    () => covered && top !== "community" && (merged.cfeed || []).length > 10 && (({ feed, next }) => ({ cfeed: feed, cnext: next }))(feedTo(merged.cfeed, 10))
+  ];
+  for (const step of steps) {
+    const cut2 = step();
+    if (!cut2) continue;
+    Object.assign(patch, cut2);
+    merged = mergeState(merged, cut2);
+    if (stateBytes(merged) <= STATE_LINE) break;
+  }
+  return { ...out, state: patch };
+}
+function withDirectWarning(event, out) {
+  if (event.name === "tick" || event.name !== "open" && !onMain(event.route)) return out;
+  if (out && (out.dialog || out.state && out.state.problem)) return out;
+  const m = takeDirectWarning();
+  if (!m) return out;
+  const answer = { moderation: m };
+  const warned = moderationDialog(answer);
+  if (!warned) return out;
+  return { ...out || {}, state: { ...out && out.state || {}, ...moderationState(answer) }, dialog: warned };
+}
+async function screenEvent(event) {
+  const s = event.state || {};
+  let out = withDirectWarning(event, await handleEvent(event));
+  const stale = leftPages(s, event.route);
+  if (stale) out = { ...out || {}, state: { ...stale, ...out && out.state || {} } };
+  return fitState(s, out, event.route);
+}
+function directAsk(d) {
+  const c = d && d.direct === true && d.caller;
+  if (!c || !c.repo || isAllowed(c.repo)) return null;
+  return { repo: c.repo, name: c.name || d.from || c.repo };
+}
+var askDirectDialog = ({ repo, name }) => ({
+  title: T.allowDirect(name)[0],
+  titleEn: T.allowDirect(name)[1],
+  body: T.allowDirectBody[0],
+  bodyEn: T.allowDirectBody[1],
+  buttons: [
+    { label: T.allowDirectYes[0], labelEn: T.allowDirectYes[1], event: "allowDirect", arg: repo, variant: "primary" },
+    { label: T.allowDirectOnce[0], labelEn: T.allowDirectOnce[1], variant: "text" }
+  ]
+});
 function patchFollow(state, userId, following) {
   const fix = (p) => sameId(p.id, userId) ? { ...p, following } : p;
   const out = {};
@@ -2849,13 +3492,13 @@ function patchFollow(state, userId, following) {
   if (state.feed) out.feed = state.feed.map((i) => i.type === "suggestions" ? { ...i, people: i.people.filter((p) => !sameId(p.id, userId)) } : i).filter((i) => i.type !== "suggestions" || i.people.length);
   return out;
 }
-async function screenEvent({ name, arg, value, state, route, device }) {
+async function handleEvent({ name, arg, value, state, route, device }) {
   const s = state || {};
   const inputs = s.inputs || {};
   try {
     switch (name) {
       case "open":
-        return open(s, route || { name: "main" });
+        return await open(s, route || { name: "main" });
       case "openProfile":
         return { route: { push: "me", params: {} }, state: { ...await loadProfile(s.me) } };
       case "tab": {
@@ -2878,13 +3521,13 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       }
       case "tick": {
         if (s.mutedUntil && !mutedUntil(s.mutedUntil)) return { state: { mutedUntil: 0 } };
-        if (s.view !== "main" || !s.feed) return null;
+        if (!(route ? onMain(route) && s.view !== "welcome" : s.view === "main") || !s.feed) return null;
         const drafts = draftsState();
         if (drafts.length !== (s.drafts || []).length) return { state: { drafts } };
         const page = await call("/feed?limit=20", { etag: s.feedTag }).catch(() => ({ notModified: true }));
         if (page.notModified) return null;
         const known = new Set([...s.feed || [], ...s.newer || []].map((i) => i.type + ":" + i.id));
-        const newer = mergeById([...s.newer || [], ...page.items.filter((i) => i.type !== "suggestions" && !known.has(i.type + ":" + i.id))]);
+        const newer = mergeById([...s.newer || [], ...page.items.filter((i) => i.type !== "suggestions" && !known.has(i.type + ":" + i.id))]).slice(0, MAX_NEWER);
         const fresh = new Map(page.items.map((i) => [i.type + ":" + i.id, i]));
         const feed = s.feed.map((i) => fresh.get(i.type + ":" + i.id) || i);
         return { state: { feed, newer, feedTag: page.etag } };
@@ -2900,7 +3543,7 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       case "moreCommunity": {
         if (!s.cnext || !s.community) return null;
         const page = await call(`/communities/${s.community.id}/feed?limit=20&before=${s.cnext}`);
-        return { state: { cfeed: mergeById([...s.cfeed || [], ...page.items]).slice(-MAX_FEED), cnext: page.next, cloadingMore: false } };
+        return { state: { cfeed: mergeById([...s.cfeed || [], ...page.items]).slice(-MAX_CFEED), cnext: page.next, cloadingMore: false } };
       }
       case "openCommunity":
         return { route: { push: "community", params: { id: String(arg) } }, state: { view: "community", ...await loadCommunity(arg) } };
@@ -2977,6 +3620,8 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         return { state: closedPicker(), focus: "openAttach" };
       case "clearAttach":
         return { state: { attach: null }, focus: "openAttach" };
+      case "clearCard":
+        return { state: { attachCard: null, draftId: null }, focus: "openAttach" };
       case "reviewDraft": {
         const d = draftById(arg);
         if (!d) return { state: { drafts: draftsState() }, ...toast(T.draftGone) };
@@ -2989,22 +3634,45 @@ async function screenEvent({ name, arg, value, state, route, device }) {
       case "publish": {
         const values = arguments[0] && arguments[0].values || inputs;
         const raw = tidyLines(values.postText ?? inputs.postText);
-        const attach = s.attach ? await withPoster(s.attach) : null;
-        if (!canPublish(raw, attach)) return toast(T.needTextOrTitle);
+        let card = null;
+        if (s.attachCard) {
+          const d = draftById(s.attachCard.draftId);
+          if (!d || !d.card) return toast(T.draftGone);
+          card = draftCard(d);
+        }
+        const attach = s.attach && !card ? await withPoster(s.attach) : null;
+        if (!canPublish(raw, attach, card)) return toast(T.needTextOrTitle);
         const text = raw ? await clean(raw) : "";
-        const linkTitle = text && !attach ? await titleHint(text) : null;
-        const link = linkTitle || !text || attach ? null : await linkPreview(text);
-        const inCommunity = s.community && (route && route.name === "community" || s.view === "community");
-        const json = postBody({ text, linkTitle, link, attach, communityId: inCommunity ? s.community.id : null });
+        const linkTitle = text && !attach && !card ? await titleHint(text) : null;
+        const link = linkTitle || !text || attach || card ? null : await linkPreview(text);
+        const inCommunity = !!s.community && !!route && route.name === "community";
+        const json = postBody({ text, linkTitle, link, attach, card, communityId: inCommunity ? s.community.id : null });
         const post2 = await callFresh("/posts", { method: "POST", json });
-        const placed = inCommunity ? { cfeed: mergeById([post2, ...s.cfeed || []]).slice(0, MAX_FEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } } : { feed: mergeById([post2, ...s.feed || []]).slice(0, MAX_FEED), tab: "feed" };
+        const placed = inCommunity ? { cfeed: mergeById([post2, ...s.cfeed || []]).slice(0, MAX_CFEED), community: { ...s.community, posts: (s.community.posts || 0) + 1 } } : { feed: mergeById([post2, ...s.feed || []]).slice(0, MAX_FEED), tab: "feed" };
         const warned = moderationDialog(post2);
+        const ask = warned || !s.draftId ? null : directAsk(draftById(s.draftId));
         if (s.draftId) removeDraft(s.draftId);
         return {
-          state: { ...placed, ...moderationState(post2), attach: null, draftId: null, drafts: draftsState(), ...closedPicker(), inputs: { postText: "", titleSearch: "" } },
+          state: {
+            ...placed,
+            ...moderationState(post2),
+            attach: null,
+            attachCard: null,
+            draftId: null,
+            maybeSent: false,
+            drafts: draftsState(),
+            ...closedPicker(),
+            inputs: { postText: "", titleSearch: "" },
+            ...ask ? { askDirect: ask } : {}
+          },
           ui: [{ close: "composer" }],
-          ...warned ? { dialog: warned } : toast(T.published)
+          ...warned ? { dialog: warned } : ask ? { dialog: askDirectDialog(ask) } : toast(T.published)
         };
+      }
+      case "allowDirect": {
+        const ask = s.askDirect;
+        if (!ask || !ask.repo || String(arg || "").toLowerCase() !== String(ask.repo).toLowerCase()) return { state: { askDirect: null } };
+        return { config: { [SETTING]: withAllowed(allowedPublishers(), ask.repo, ask.name) }, state: { askDirect: null }, ...toast(T.allowed(ask.name)) };
       }
       case "like":
       case "unlike": {
@@ -3012,7 +3680,9 @@ async function screenEvent({ name, arg, value, state, route, device }) {
         return { state: patchPost(s, arg, () => ({ likes: r.likes, liked: r.liked })) };
       }
       case "coin":
-        return giveCoin(s, arg);
+        return await giveCoin(s, arg);
+      case "cardTap":
+        return await cardTap(s, arg);
       case "loadCoins":
         return { state: { coins: await loadCoins() } };
       case "openPost": {
@@ -3360,6 +4030,7 @@ export {
   job,
   panel,
   panelAction,
+  proto_wall_card,
   proto_wall_share,
   screen,
   screenEvent,

@@ -1,4 +1,5 @@
 // The Kino Social server: one host, JSON, a bearer session kept in kino.storage.
+import { slimCards } from "./card.js";
 import { fillPosters } from "./posters.js";
 
 export const BASE = "https://129-158-250-81.sslip.io";
@@ -56,16 +57,18 @@ export async function login() {
 
 /**
  * One call with the saved session. `etag` sends If-None-Match: a 304 answers `{ notModified: true }`.
- * A 401 drops the session (the caller logs in again where it may).
+ * A 401 drops the session (the caller logs in again where it may). Every post's share card comes back slimmed for the
+ * screen state (`slimCards`), unless `fullCards` asks for it whole. `timeoutMs` (15 s by default) is shorter where the
+ * caller itself has less time (a provider call has 10 s), where `posters: false` also skips the TMDB poster lookups.
  */
-export async function call(path, { method = "GET", json, etag } = {}) {
+export async function call(path, { method = "GET", json, etag, fullCards = false, timeoutMs = 15000, posters = true } = {}) {
   const session = savedSession();
   if (!session) throw new ApiError("no_session", 401);
   const headers = { authorization: "Bearer " + session };
   if (etag) headers["if-none-match"] = etag;
   let r;
   try {
-    r = await kino.fetch(BASE + path, { method, headers, body: json === undefined ? undefined : { json }, timeoutMs: 15000 });
+    r = await kino.fetch(BASE + path, { method, headers, body: json === undefined ? undefined : { json }, timeoutMs });
   } catch (_) {
     throw new ApiError("offline", 0);
   }
@@ -86,7 +89,8 @@ export async function call(path, { method = "GET", json, etag } = {}) {
   if (r.status === 409) throw new ApiError(body.error || "conflict", 409);
   if (r.status === 400) throw new ApiError(body.error || "bad_request", 400);
   if (!r.ok) throw new ApiError("offline", r.status);
-  return { ...(await fillPosters(body)), etag: r.headers.etag };
+  const filled = posters ? await fillPosters(body) : body;
+  return { ...(fullCards ? filled : slimCards(filled)), etag: r.headers.etag };
 }
 
 /** `call`, logging in again once when the session is gone (person-started calls only). */

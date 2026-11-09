@@ -104,16 +104,21 @@ export function pickAttachment(key, ...lists) {
   return null;
 }
 
-/** A post needs some text or an attached title. */
-export const canPublish = (text, attach) => String(text || "").trim().length > 0 || validAttachment(attach);
+/** A post needs some text, an attached title or a share card. */
+export const canPublish = (text, attach, card = null) => String(text || "").trim().length > 0 || validAttachment(attach) || !!card;
 
 /**
  * The POST /posts body. The attachment the person picked wins over any link in the text (owner, 2026-10-30): the link
  * then stays plain text and no preview goes. Without one, a TMDB or IMDb link's title ([linkTitle]) or another link's
  * preview ([link]) goes as before. [season]/[episode] are added to the title only when it is a series and both are
  * plain positive integers; a movie never gets them.
+ *
+ * A share card ([card], `{ plugin, title, description?, image?, route?, query? }`) wins over everything: the body is then
+ * `{ text, card, communityId? }`, never a title or a link. Without one the body has no `card` key at all (the server
+ * refuses `card: null`).
  */
-export function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null, season = null, episode = null }) {
+export function postBody({ text, linkTitle = null, link = null, attach = null, communityId = null, season = null, episode = null, card = null }) {
+  if (card) return { text, card, ...(communityId ? { communityId: Number(communityId) } : {}) };
   const picked = validAttachment(attach) ? attach : null;
   let title = picked || linkTitle;
   if (title && title.kind === "series" && Number.isInteger(season) && season > 0 && Number.isInteger(episode) && episode > 0) {

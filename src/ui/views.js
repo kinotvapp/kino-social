@@ -7,6 +7,7 @@ import { muteLine, mutedUntil } from "../moderation.js";
 import { activityCard, commentRow, feedItem, postCard } from "./cards.js";
 import { communitiesTab } from "./communities.js";
 import { MAX_QUERY, attachKey } from "../attach.js";
+import { draftImage } from "../wall.js";
 import { Avatar, Button, IconBtn, NameBlock, Raw, Tag, TextBtn, Txt, barPadding, isTv, pagePadding } from "./kit.js";
 
 const MAX_TEXT = 500;
@@ -70,11 +71,34 @@ function titlePicker(s) {
   };
 }
 
+/**
+ * A share card in the composer: its image (read from the stored draft, never from the screen state), title, description
+ * and «De <plugin>», with «Quitar tarjeta» at its end.
+ */
+function cardRow(c, lock) {
+  const image = draftImage(c.draftId);
+  return {
+    type: "Card", key: "attachedCard", variant: "outlined", padding: 8,
+    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      ...(image ? [{ type: "Image", key: "attachedCardImage", width: 56, aspect: "2:3", borderRadius: "small", url: image, alt: c.title, altEn: c.title }] : []),
+      { type: "Column", flex: 1, gap: 4, children: [
+        Raw(c.title, { style: "h5", bold: true, maxLines: 2 }),
+        ...(c.description ? [Raw(c.description, { style: "caption", maxLines: 2 })] : []),
+        Txt(T.draftFrom((c.plugin && c.plugin.name) || ""), { style: "caption", color: "muted", maxLines: 1 }),
+      ] },
+      IconBtn("close", T.removeCard, "clearCard", { key: "clearCard", ...lock }),
+    ] }],
+  };
+}
+
 function composerSheet(s) {
   const until = muted(s);
   const lock = until ? { enabled: false } : {};
   const attach = s.attach || null;
-  const attachment = attach
+  const attachCard = s.attachCard || null;
+  // A post has a card or a title, never both: while a card is attached the attach button is hidden.
+  const attachment = attachCard ? cardRow(attachCard, lock)
+    : attach
     ? titleRow(attach, { key: "attached" }, [IconBtn("close", T.removeAttach, "clearAttach", { key: "clearAttach", ...lock })])
     : s.picking ? titlePicker(s)
       : { type: "Button", variant: "secondary", key: "openAttach", icon: "movie", labelText: T.attach[0], labelTextEn: T.attach[1],
@@ -82,8 +106,11 @@ function composerSheet(s) {
   return {
     type: "BottomSheet", key: "composer", title: T.compose[0], titleEn: T.compose[1],
     children: [{ type: "Form", key: "composeForm", gap: 12, onSubmit: { event: "publish", timeoutMs: 28000 }, children: [
+      // A reviewed draft whose direct publish went out with no answer: it may be on the wall already (only while the
+      // composer still holds that draft: «Quitar tarjeta» lets it go).
+      ...(s.maybeSent && s.draftId ? [Txt(T.maybeSent, { key: "maybeSent", style: "caption", color: "error" })] : []),
       // Several lines (Enter is a new line); Kino draws a multi-line field 3 lines high, growing to 8.
-      { type: "TextField", key: "postText", multiline: true, maxLines: 8, maxLength: MAX_TEXT, required: !attach,
+      { type: "TextField", key: "postText", multiline: true, maxLines: 8, maxLength: MAX_TEXT, required: !attach && !attachCard,
         labelText: T.prompt[0], labelTextEn: T.prompt[1], hintText: T.postHint[0], hintTextEn: T.postHint[1], ...lock },
       attachment,
       until ? muteLine(until) : Txt(T.aiNote, { style: "caption", color: "muted" }),
@@ -189,6 +216,7 @@ export function draftsBanner(s) {
       Txt(d.from ? T.draftFrom(d.from) : T.draftFromUnknown, { style: "label", color: "muted" }),
       ...(d.text ? [Raw(d.text, { maxLines: 3 })] : []),
       ...(d.titled ? [Txt(T.draftWithTitle, { style: "caption", color: "muted" })] : []),
+      ...(d.carded ? [Txt(T.draftWithCard(d.from), { style: "caption", color: "muted" })] : []),
       { type: "Row", gap: 8, children: [
         Button(T.review, { event: "reviewDraft", arg: d.id, timeoutMs: 20000 }, { key: "review-" + d.id, icon: "edit" }),
         TextBtn(T.discard, { event: "discardDraft", arg: d.id }, { key: "discard-" + d.id }),
@@ -367,6 +395,9 @@ function profileTab(s, ctx) {
     Txt(T.posts, { style: "h4" }),
     ...((p.posts || []).length ? p.posts.map((post) => postCard(post, ctx, s.me)) : [Txt(T.noPosts, { color: "muted" })]),
     ...creatorPluginsSection(s.myPlugins, { own: true }),
+    // The plugins the person allowed to post straight to their wall: Kino's own form for the synced list, to remove them.
+    Txt(T.directTitle, { style: "h4" }),
+    { type: "settings", keys: ["directPublishers"], key: "directPublishers" },
     TextBtn(["Cerrar sesión en todos tus aparatos", "Log out on all your devices"], "logoutAll",
       { key: "logoutAll", confirm: "¿Cerrar sesión en todos tus aparatos?", confirmEn: "Log out on all your devices?" }),
     editProfileSheet(s),

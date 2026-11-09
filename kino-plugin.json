@@ -1,7 +1,7 @@
 {
   "id": "kino-social",
   "name": "Kino Social",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "apiVersion": 16,
   "entry": "plugin.js",
   "description": "Experimento: un feed para contar lo que ves, con comentarios, perfiles y personas a las que seguir",
@@ -37,6 +37,30 @@
       "default": true,
       "hint": "Hacia las 8 p. m., si tienes kinos",
       "hintEn": "Around 8 p.m., if you have Kinos"
+    },
+    {
+      "key": "directPublishers",
+      "label": "Plugins que publican directo",
+      "labelEn": "Plugins that post directly",
+      "type": "list",
+      "max": 20,
+      "hint": "Publican en tu muro sin pasar por tu revisión",
+      "hintEn": "They post to your wall without your review",
+      "fields": [
+        {
+          "key": "repo",
+          "label": "Dirección",
+          "labelEn": "Address",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "name",
+          "label": "Nombre",
+          "labelEn": "Name",
+          "type": "text"
+        }
+      ]
     }
   ],
   "jobs": [
@@ -86,15 +110,15 @@
     "20": {
       "provides": {
         "wall": {
-          "summary": "Propone publicaciones para tu muro de Kino Social; tú las revisas y las publicas",
+          "summary": "Propone publicaciones y tarjetas para tu muro de Kino Social; tú las revisas",
           "calls": {
             "share": {
               "in": "Share",
-              "out": {
-                "status": "string",
-                "draftId": "string",
-                "pending": "number"
-              }
+              "out": "Answer"
+            },
+            "card": {
+              "in": "Card",
+              "out": "Answer"
             }
           },
           "types": {
@@ -102,13 +126,33 @@
               "text": "string?",
               "title": "Title?",
               "link": "string?",
-              "from": "string?"
+              "from": "string?",
+              "publish": "boolean?"
             },
             "Title": {
               "kind": "string",
               "tmdb": "number",
               "season": "number?",
               "episode": "number?"
+            },
+            "Card": {
+              "title": "string",
+              "description": "string?",
+              "image": "string?",
+              "route": "Route?",
+              "query": "string?",
+              "text": "string?",
+              "publish": "boolean?"
+            },
+            "Route": {
+              "name": "string",
+              "argsJson": "string?"
+            },
+            "Answer": {
+              "status": "string",
+              "draftId": "string?",
+              "pending": "number?",
+              "postId": "number?"
             }
           }
         }
@@ -117,6 +161,6 @@
   },
   "signature": {
     "authorKey": "82b87b938e0a95b142467c815a8823cb54310a13a828c3c4c77b1eda43294ae6",
-    "value": "a5b0059b77ebfa2a0b0a5b90e2a5225df2304dc2c5f9fa90e86c6fd22209cb09ceb5fb10b2ba987ca7822e87d4e4bd9e5ef01b6d34875ed8531401f15946ce0d"
+    "value": "5fd9a4e65676a50547059e2945842ea6eda1cddbf04ec0be0f730cdee4219dc90b958d400778f4acd2606791dcb3548f3dccaaeb4b995805fff43a5bba1ae902"
   }
 }

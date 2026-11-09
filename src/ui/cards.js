@@ -1,6 +1,7 @@
 // One feed item as a card: a post (author, text, link preview, likes and comments), what someone watched (with the
 // poster), or the people worth following while the person follows few.
 
+import { cardGo, cardImageUrl, slimCard } from "../card.js";
 import { T, likedLine, watchedLine } from "../i18n.js";
 import { Avatar, Button, IconBtn, NameBlock, Raw, TextBtn, Txt, count, isTv } from "./kit.js";
 
@@ -63,6 +64,28 @@ function linkCard(post, ctx, pfx) {
 }
 
 /**
+ * A share card another plugin sent, laid out like a title's card: its picture, title, description, which plugin it came
+ * from, and «Abrir en <plugin>», which opens it there (the TV's focus stop; on the phone the whole card does the same).
+ */
+function shareCard(post, ctx, pfx) {
+  const c = slimCard(post.card);
+  if (!c) return null;
+  const open = cardGo(post);
+  const image = cardImageUrl(c.i);
+  return { type: "Card", key: pfx + "card-" + post.id, variant: "outlined", padding: 12, ...(isTv(ctx) ? {} : { onTap: open }),
+    children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+      ...(image ? [{ type: "Image", url: image, width: { compact: 64, expanded: 80 }, borderRadius: "small", alt: c.t, altEn: c.t }] : []),
+      { type: "Column", flex: 1, gap: 4, children: [
+        Raw(c.t, { style: "h5", bold: true, maxLines: 2 }),
+        ...(c.d ? [Raw(c.d, { style: "caption", color: "muted", maxLines: 2 })] : []),
+        Txt(T.draftFrom(c.n), { style: "label", color: "muted", maxLines: 1 }),
+        { type: "Row", children: [{ type: "Button", variant: "secondary", key: pfx + "open-" + post.id, icon: "open_in_new",
+          labelText: T.openIn(c.n)[0], labelTextEn: T.openIn(c.n)[1], onPressed: open }] },
+      ] },
+    ] }] };
+}
+
+/**
  * Whether a post can get a coin here: this Kino has coins, the server named the author's coins account, and it is not the
  * person's own post (the service refuses a gift to yourself, so the button never offers one).
  */
@@ -112,7 +135,7 @@ export function postCard(post, ctx, me, { selected = false, full = false } = {})
       // The text as written, line breaks included (a post with an attached title may have none).
       ...(post.text ? [Raw(post.text, { maxLines: full ? undefined : tv ? 4 : 12 })]
         : post.link && post.link.tmdb ? [Txt(likedLine(post), { maxLines: full ? undefined : 2 })] : []),
-      ...(post.link ? [linkCard(post, ctx, pfx)] : []),
+      ...(post.card ? [shareCard(post, ctx, pfx)].filter(Boolean) : post.link ? [linkCard(post, ctx, pfx)] : []),
       ...(!tv || full ? [actionsRow(post, ctx, pfx, full, me)] : [{ type: "Row", gap: 16, children: [
         { type: "Row", gap: 4, crossAxisAlignment: "center", children: [{ type: "Icon", name: "heart", color: post.liked ? "error" : "muted" }, Raw(count(post.likes || 0), { style: "caption", color: "muted" })] },
         // The TV only shows a known coin total, like the likes: giving happens in the open post beside the feed.

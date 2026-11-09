@@ -12,6 +12,7 @@ export const T = {
   draftFrom: (who) => [`De ${who}`, `From ${who}`],
   draftFromUnknown: ["De otro plugin", "From another plugin"],
   draftWithTitle: ["Con un título adjunto", "With a title attached"],
+  draftWithCard: (from) => [`Con una tarjeta de ${from}`, `With a card from ${from}`],
   review: ["Revisar", "Review"],
   discard: ["Descartar", "Discard"],
   draftDiscarded: ["Borrador descartado", "Draft discarded"],
@@ -141,7 +142,17 @@ export const T = {
     return t.year ? [`${t.year} · ${es}`, `${t.year} · ${en}`] : [es, en];
   },
   removeAttach: ["Quitar película o serie", "Remove movie or series"],
+  // A share card another plugin proposed, under the person's own words in the composer.
+  removeCard: ["Quitar tarjeta", "Remove card"],
+  badCard: ["Esta tarjeta no se puede publicar", "This card can't be posted"],
+  // A card's plugin when it has no name at all (the server needs one; stored as sent, so the ES word goes).
+  pluginFallback: ["Plugin", "Plugin"],
   openInKino: ["Ver en Kino", "Open in Kino"],
+  // A share card in the feed: its button opens the plugin that sent it (Kino 0.9.84's go.plugin).
+  openIn: (name) => [`Abrir en ${name}`, `Open in ${name}`],
+  updateKinoToOpen: (name) => [`Actualiza Kino para abrir esto en ${name}`, `Update Kino to open this in ${name}`],
+  cardPostGone: ["Esta publicación ya no está", "This post is gone"],
+  cannotOpen: (name) => [`${name} no se puede abrir desde aquí`, `${name} can't be opened from here`],
   needTextOrTitle: ["Escribe algo o adjunta una película o serie", "Write something or attach a movie or series"],
   // Moderation: a masked post or comment is a warning (strike); the third in 12 h mutes for 12 h.
   strikeWarning: (n, limit) => [
@@ -182,6 +193,15 @@ export const T = {
   coinNoticeTitle: (n) => [n === 1 ? "Tienes 1 kino" : `Tienes ${n} kinos`, n === 1 ? "You have 1 Kino" : `You have ${n} Kinos`],
   coinNoticeEarned: (n) => [n === 1 ? "Hoy ganaste 1 viendo" : `Hoy ganaste ${n} viendo`, n === 1 ? "You earned 1 today by watching" : `You earned ${n} today by watching`],
   coinNoticeSpend: ["Regálalos a las publicaciones que te gusten", "Give them to the posts you like"],
+  // «Publicar ya»: a plugin the person allows posts to their wall without the review (the manifest's directPublishers).
+  allowDirect: (name) => [`¿Permitir que ${name} publique directo en tu muro?`, `Allow ${name} to post straight to your wall?`],
+  allowDirectBody: ["Lo próximo que comparta saldrá sin pasar por aquí. Puedes quitarlo en Plugins que publican directo, en tu perfil.",
+    "What it shares next goes out without coming here. You can remove it under Plugins that post directly, on your profile."],
+  allowDirectYes: ["Permitir", "Allow"],
+  allowDirectOnce: ["Solo esta vez", "Only this time"],
+  allowed: (name) => [`${name} ya puede publicar directo`, `${name} can now post directly`],
+  directTitle: ["Plugins que publican directo", "Plugins that post directly"],
+  maybeSent: ["Puede que ya se haya publicado; revisa tu muro", "It may already be on your wall; check it"],
 };
 
 /** "vio *Título*" for a movie, "vio T4 · E3 de *Serie*" for an episode. */

@@ -122,5 +122,9 @@ test("the manifest opens the wall door for Kino 0.9.81 without refusing older on
   assert.equal(m.provides, undefined, "a top-level block would need apiVersion 20");
   const wall = m.enhancements["20"].provides.wall;
   assert.ok(wall.summary.length <= 120);
-  assert.deepEqual(Object.keys(wall.calls), ["share"]);
+  assert.deepEqual(Object.keys(wall.calls), ["share", "card"]);
+  assert.equal(m.version, "0.9.8");
+  assert.deepEqual(wall.types.Answer, { status: "string", draftId: "string?", pending: "number?", postId: "number?" });
+  assert.equal(wall.calls.card.out, "Answer");
+  assert.equal(wall.calls.share.out, "Answer");
 });

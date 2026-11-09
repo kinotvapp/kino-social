@@ -93,12 +93,20 @@ export function maskWith(text, list) {
   return { text: out, hit };
 }
 
+const localMask = (text) => maskWith(text, new Set([...COMMON, ...learned()]));
+
+/**
+ * The text masked with the local list only (the common words plus what Kino's AI found before), never asking the AI: for
+ * a post that goes out without the person's press (an allowed plugin's direct publish). The server masks again on save.
+ */
+export const cleanLocal = (text) => localMask(text).text;
+
 /**
  * The text ready to send. Inside a press only (kino.ai answers the person's own taps): the local list first, the AI only
  * when it found nothing. Any AI failure keeps the local result.
  */
 export async function clean(text) {
-  const local = maskWith(text, new Set([...COMMON, ...learned()]));
+  const local = localMask(text);
   if (local.hit || typeof kino.ai !== "object") return local.text;
   let answer;
   try {
