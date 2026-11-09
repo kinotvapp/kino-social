@@ -460,10 +460,12 @@ export function mainView(s, ctx) {
     // One row: the tabs where the greeting used to be, then (on the TV, in the feed) the red write button, reload and your
     // avatar. The bar's own buttons are plain icons, so the red one rides in the title next to them. A phone writes from the
     // prompt at the top of the feed.
-    appBar: { type: "AppBar", ...barPadding(ctx), title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
+    // A phone has no room for the three tabs beside the buttons: the bar names the plugin and the tabs sit right under it (owner,
+    // 2026-11-08). The TV keeps them in the one row.
+    appBar: { type: "AppBar", ...barPadding(ctx), ...(isTv(ctx) ? { title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
       { ...tabs, flex: 1 },
       Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...(muted(s) ? { enabledAt: muted(s) } : {}) }),
-    ] } : tabs, leading: IconBtn("close", T.close, { close: true }, { key: "close" }), actions: [
+    ] } : tabs } : { title: "Kino Social", titleEn: "Kino Social", bottom: tabs }), leading: IconBtn("close", T.close, { close: true }, { key: "close" }), actions: [
       IconBtn("refresh", T.refresh, { event: "refresh", timeoutMs: 20000 }, { key: "refresh", loading: !!s.refreshing }),
       me,
     ] },

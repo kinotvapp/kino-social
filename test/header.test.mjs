@@ -12,12 +12,14 @@ const find = (node, pred, out = []) => {
   return out;
 };
 
-test("the app bar holds the tabs where the greeting was: no «Hola», no second row", () => {
+test("the TV's bar holds the tabs in its one row; a phone's names the plugin and has the three tabs right under it", () => {
   for (const device of ["phone", "tv"]) {
     const bar = mainView({ me: ME, tab: "feed", feed: [] }, { device }).appBar;
-    const tabs = find(bar.title, (n) => n.type === "TabBar")[0];
+    const where = device === "tv" ? bar.title : bar.bottom;
+    const tabs = find(where, (n) => n.type === "TabBar")[0];
     assert.deepEqual(tabs.tabs.map((t) => t.value), ["feed", "communities", "people"]);
-    assert.equal(bar.bottom, undefined);
+    if (device === "tv") assert.equal(bar.bottom, undefined);
+    else assert.equal(bar.title, "Kino Social");
     assert.ok(!JSON.stringify(bar).includes("Hola") && !JSON.stringify(bar).includes("Hi,"));
   }
 });
