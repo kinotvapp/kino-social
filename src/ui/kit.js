@@ -2,8 +2,13 @@
 
 export const isTv = (ctx) => ctx.device === "tv";
 
-/** Kino's app bar pads 24 dp on the TV all round: a little less above and below, the sides as they were. */
-export const barPadding = (ctx) => (isTv(ctx) ? { padding: { x: 24, y: 12 } } : {});
+/**
+ * Every Kino Social page has ONE compact bar (Kino's "one compact bar", apiVersion 19 via enhancements["20"]): Kino's bar and
+ * ours merge, our `leading` (Close on the front page, Back on the others) where Kino's Close was, our title where the plugin's
+ * name was, Kino's bell after our actions. `dense` on a phone (the TV ignores it); on the TV 24 dp sides, a little less above and
+ * below. A Kino older than 0.9.81 ignores the flag and draws its two bars as before.
+ */
+export const barPadding = (ctx) => ({ mergeWithKinoBar: true, ...(isTv(ctx) ? { padding: { x: 24, y: 12 } } : { dense: true }) });
 
 export const Txt = ([es, en], props = {}) => ({ type: "Text", text: es, textEn: en, ...props });
 /** A text the person wrote: the same in both languages. */

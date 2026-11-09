@@ -463,7 +463,7 @@ export function mainView(s, ctx) {
     appBar: { type: "AppBar", ...barPadding(ctx), title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
       { ...tabs, flex: 1 },
       Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...(muted(s) ? { enabledAt: muted(s) } : {}) }),
-    ] } : tabs, actions: [
+    ] } : tabs, leading: IconBtn("close", T.close, { close: true }, { key: "close" }), actions: [
       IconBtn("refresh", T.refresh, { event: "refresh", timeoutMs: 20000 }, { key: "refresh", loading: !!s.refreshing }),
       me,
     ] },

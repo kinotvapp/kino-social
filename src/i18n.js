@@ -125,6 +125,7 @@ export const T = {
   postMenu: ["Opciones", "Options"],
   you: ["Tú", "You"],
   back: ["Atrás", "Back"],
+  close: ["Cerrar", "Close"],
   aiNote: ["Revisamos que el texto no tenga groserías", "We check the text has no swear words"],
   // Attaching a movie or series to a new post
   attach: ["Adjuntar película o serie", "Attach a movie or series"],

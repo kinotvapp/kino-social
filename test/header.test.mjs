@@ -80,3 +80,21 @@ test("TV profile: the bars of the pages with a back arrow share the home bar's p
   assert.equal(find(phoneHead.children[0], (n) => n.key === "editProfileBtn").length, 0, "a phone keeps it under the numbers");
   assert.equal(find(phoneHead, (n) => n.key === "editProfileBtn").length, 1);
 });
+
+test("one compact bar on every page: merged with Kino's, dense on a phone, Close on the front page and Back elsewhere", async () => {
+  const { meView, postView, userView } = await import("../src/ui/views.js");
+  const { communityView } = await import("../src/ui/communities.js");
+  const s = { me: ME, tab: "feed", feed: [], profile: null, thread: null, user: null, community: null };
+  for (const device of ["phone", "tv"]) {
+    const ctx = { device };
+    const pages = { main: mainView(s, ctx), me: meView(s, ctx), post: postView(s, ctx), user: userView(s, ctx), community: communityView(s, ctx) };
+    for (const [name, page] of Object.entries(pages)) {
+      const bar = page.appBar;
+      assert.equal(bar.mergeWithKinoBar, true, name + " merges its bar");
+      assert.equal(bar.leading && bar.leading.type, "IconButton", name + " has a leading way out");
+      assert.equal(bar.dense, device === "phone" ? true : undefined, name + " is dense only on a phone");
+    }
+    assert.deepEqual(pages.main.appBar.leading.onPressed, { close: true });
+    for (const name of ["me", "post", "user", "community"]) assert.equal(pages[name].appBar.leading.onPressed, "back");
+  }
+});

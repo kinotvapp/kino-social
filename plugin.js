@@ -122,6 +122,7 @@ var T = {
   postMenu: ["Opciones", "Options"],
   you: ["Tú", "You"],
   back: ["Atrás", "Back"],
+  close: ["Cerrar", "Close"],
   aiNote: ["Revisamos que el texto no tenga groserías", "We check the text has no swear words"],
   // Attaching a movie or series to a new post
   attach: ["Adjuntar película o serie", "Attach a movie or series"],
@@ -1717,7 +1718,7 @@ async function reviewState(d) {
 
 // src/ui/kit.js
 var isTv = (ctx) => ctx.device === "tv";
-var barPadding = (ctx) => isTv(ctx) ? { padding: { x: 24, y: 12 } } : {};
+var barPadding = (ctx) => ({ mergeWithKinoBar: true, ...isTv(ctx) ? { padding: { x: 24, y: 12 } } : { dense: true } });
 var Txt = ([es, en], props = {}) => ({ type: "Text", text: es, textEn: en, ...props });
 var Raw = (text, props = {}) => ({ type: "Text", text, textEn: text, ...props });
 var AVATAR_COLORS = ["primaryContainer", "secondary", "primary"];
@@ -2723,7 +2724,7 @@ function mainView(s, ctx) {
     appBar: { type: "AppBar", ...barPadding(ctx), title: writeInBar ? { type: "Row", gap: 12, crossAxisAlignment: "center", children: [
       { ...tabs, flex: 1 },
       Button(T.compose, { ui: [{ open: "composer" }] }, { key: "tvCompose", icon: "edit", ...muted(s) ? { enabledAt: muted(s) } : {} })
-    ] } : tabs, actions: [
+    ] } : tabs, leading: IconBtn("close", T.close, { close: true }, { key: "close" }), actions: [
       IconBtn("refresh", T.refresh, { event: "refresh", timeoutMs: 2e4 }, { key: "refresh", loading: !!s.refreshing }),
       me
     ] },
