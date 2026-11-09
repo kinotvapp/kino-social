@@ -2229,7 +2229,7 @@ function cardRow(c, lock) {
     variant: "outlined",
     padding: 8,
     children: [{ type: "Row", gap: 12, crossAxisAlignment: "center", children: [
-      ...image ? [{ type: "Image", key: "attachedCardImage", width: 56, aspect: "2:3", borderRadius: "small", url: image, alt: c.title, altEn: c.title }] : [],
+      ...image ? [{ type: "Image", key: "attachedCardImage", width: { compact: 64, expanded: 80 }, borderRadius: "small", url: image, alt: c.title, altEn: c.title }] : [],
       { type: "Column", flex: 1, gap: 4, children: [
         Raw(c.title, { style: "h5", bold: true, maxLines: 2 }),
         ...c.description ? [Raw(c.description, { style: "caption", maxLines: 2 })] : [],
